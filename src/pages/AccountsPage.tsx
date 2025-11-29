@@ -118,6 +118,19 @@ export default function AccountsPage() {
     fetchLinkToken()
   }, [fetchLinkToken])
 
+  // Store access token before opening Plaid (survives OAuth redirects)
+  const storeAccessToken = useCallback(async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session?.access_token) {
+        localStorage.setItem('plaid_pending_access_token', session.access_token)
+        console.log('🔐 Stored access token for Plaid')
+      }
+    } catch (e) {
+      console.error('Failed to store access token:', e)
+    }
+  }, [])
+
   // Handle successful Plaid Link connection
   const onPlaidSuccess = useCallback(async (public_token: string, metadata: any) => {
     console.log('🏦 Plaid Link success! Exchanging token...')
@@ -134,41 +147,58 @@ export default function AccountsPage() {
         throw new Error('Supabase URL not configured')
       }
 
-      // Try to get session with timeout
-      console.log('Getting session...')
-      let session = null
+      // Try multiple methods to get the access token
+      console.log('Getting access token...')
+      let accessToken = null
       
-      try {
-        const sessionPromise = supabase.auth.getSession()
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Session timeout')), 5000)
-        )
-        const result = await Promise.race([sessionPromise, timeoutPromise]) as any
-        session = result?.data?.session
-      } catch (e) {
-        console.error('Session fetch failed:', e)
+      // Method 1: Try stored token from before Plaid opened (survives OAuth)
+      accessToken = localStorage.getItem('plaid_pending_access_token')
+      if (accessToken) {
+        console.log('✅ Found stored access token')
       }
       
-      if (!session) {
-        console.log('No session from getSession, checking auth store...')
-        // Fallback: try to get session from stored auth
-        const storedSession = await supabase.auth.getSession()
-        session = storedSession?.data?.session
+      // Method 2: Try current session
+      if (!accessToken) {
+        console.log('Trying getSession...')
+        try {
+          const { data: { session } } = await supabase.auth.getSession()
+          accessToken = session?.access_token
+          if (accessToken) console.log('✅ Got token from getSession')
+        } catch (e) {
+          console.error('getSession failed:', e)
+        }
       }
       
-      if (!session) {
-        console.error('No session available')
+      // Method 3: Try refreshing session
+      if (!accessToken) {
+        console.log('Trying to refresh session...')
+        try {
+          const { data: { session } } = await supabase.auth.refreshSession()
+          accessToken = session?.access_token
+          if (accessToken) console.log('✅ Got token from refreshSession')
+        } catch (e) {
+          console.error('refreshSession failed:', e)
+        }
+      }
+      
+      if (!accessToken) {
+        console.error('No access token available')
+        toast({
+          title: 'Session Expired',
+          description: 'Please refresh the page and try again.',
+          variant: 'destructive',
+        })
         throw new Error('Session expired - please refresh the page and log in again')
       }
 
-      console.log('Session found! Making API call...')
+      console.log('Making API call to plaid-exchange-token...')
       
       const response = await fetch(
         `${supabaseUrl}/functions/v1/plaid-exchange-token`,
         {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${session.access_token}`,
+            'Authorization': `Bearer ${accessToken}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ public_token, metadata }),
@@ -187,6 +217,9 @@ export default function AccountsPage() {
       console.log('Response data:', JSON.stringify(data))
       
       if (data.success) {
+        // Clear stored token
+        localStorage.removeItem('plaid_pending_access_token')
+        
         toast({
           title: '🎉 Bank Connected!',
           description: `Successfully connected ${data.institution || 'your bank'}. ${data.accounts?.length || 0} account(s) added.`,
@@ -388,7 +421,10 @@ export default function AccountsPage() {
               </div>
               <Button 
                 className="glow-sm"
-                onClick={() => openPlaidLink()}
+                onClick={async () => {
+                  await storeAccessToken()
+                  openPlaidLink()
+                }}
                 disabled={!plaidReady || !linkToken || isConnecting}
               >
                 {isConnecting ? (
