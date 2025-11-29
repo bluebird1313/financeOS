@@ -121,20 +121,36 @@ export default function AccountsPage() {
   // Handle successful Plaid Link connection
   const onPlaidSuccess = useCallback(async (public_token: string, metadata: any) => {
     console.log('🏦 Plaid Link success! Exchanging token...')
-    console.log('Public token received:', public_token ? 'yes' : 'no')
-    console.log('Metadata:', metadata)
+    console.log('Public token:', public_token)
+    console.log('Metadata:', JSON.stringify(metadata))
     
     setIsConnecting(true)
+    
+    // Small delay to ensure auth state is ready after redirect
+    await new Promise(resolve => setTimeout(resolve, 500))
+    
     try {
-      const { data: { session } } = await supabase.auth.getSession()
+      console.log('Getting session...')
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+      
+      if (sessionError) {
+        console.error('Session error:', sessionError)
+        throw new Error('Session error: ' + sessionError.message)
+      }
+      
       if (!session) {
-        console.error('No session found')
-        throw new Error('No session - please log in again')
+        console.error('No session found - user may need to log in again')
+        throw new Error('No session - please refresh the page and try again')
       }
 
+      console.log('Session found, user:', session.user.email)
       console.log('Making API call to plaid-exchange-token...')
+      
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+      console.log('Supabase URL:', supabaseUrl)
+      
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/plaid-exchange-token`,
+        `${supabaseUrl}/functions/v1/plaid-exchange-token`,
         {
           method: 'POST',
           headers: {
@@ -147,7 +163,7 @@ export default function AccountsPage() {
 
       console.log('Response status:', response.status)
       const data = await response.json()
-      console.log('Response data:', data)
+      console.log('Response data:', JSON.stringify(data))
       
       if (data.success) {
         toast({
