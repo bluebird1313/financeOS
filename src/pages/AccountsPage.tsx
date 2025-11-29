@@ -122,32 +122,46 @@ export default function AccountsPage() {
   const onPlaidSuccess = useCallback(async (public_token: string, metadata: any) => {
     console.log('🏦 Plaid Link success! Exchanging token...')
     console.log('Public token:', public_token)
-    console.log('Metadata:', JSON.stringify(metadata))
     
     setIsConnecting(true)
     
-    // Small delay to ensure auth state is ready after redirect
-    await new Promise(resolve => setTimeout(resolve, 500))
-    
     try {
-      console.log('Getting session...')
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+      // Get the Supabase URL
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+      console.log('Supabase URL:', supabaseUrl)
       
-      if (sessionError) {
-        console.error('Session error:', sessionError)
-        throw new Error('Session error: ' + sessionError.message)
+      if (!supabaseUrl) {
+        throw new Error('Supabase URL not configured')
+      }
+
+      // Try to get session with timeout
+      console.log('Getting session...')
+      let session = null
+      
+      try {
+        const sessionPromise = supabase.auth.getSession()
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Session timeout')), 5000)
+        )
+        const result = await Promise.race([sessionPromise, timeoutPromise]) as any
+        session = result?.data?.session
+      } catch (e) {
+        console.error('Session fetch failed:', e)
       }
       
       if (!session) {
-        console.error('No session found - user may need to log in again')
-        throw new Error('No session - please refresh the page and try again')
+        console.log('No session from getSession, checking auth store...')
+        // Fallback: try to get session from stored auth
+        const storedSession = await supabase.auth.getSession()
+        session = storedSession?.data?.session
+      }
+      
+      if (!session) {
+        console.error('No session available')
+        throw new Error('Session expired - please refresh the page and log in again')
       }
 
-      console.log('Session found, user:', session.user.email)
-      console.log('Making API call to plaid-exchange-token...')
-      
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-      console.log('Supabase URL:', supabaseUrl)
+      console.log('Session found! Making API call...')
       
       const response = await fetch(
         `${supabaseUrl}/functions/v1/plaid-exchange-token`,
@@ -162,6 +176,13 @@ export default function AccountsPage() {
       )
 
       console.log('Response status:', response.status)
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('API error:', errorText)
+        throw new Error(`API error: ${response.status}`)
+      }
+      
       const data = await response.json()
       console.log('Response data:', JSON.stringify(data))
       
