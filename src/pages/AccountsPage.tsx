@@ -76,6 +76,7 @@ export default function AccountsPage() {
   const [editingAccount, setEditingAccount] = useState<Account | null>(null)
   const [linkToken, setLinkToken] = useState<string | null>(null)
   const [isConnecting, setIsConnecting] = useState(false)
+  const [isSyncing, setIsSyncing] = useState(false)
   const [formData, setFormData] = useState({
     name: '',
     type: 'checking' as Account['type'],
@@ -83,6 +84,50 @@ export default function AccountsPage() {
     institution_name: '',
     business_id: '',
   })
+
+  // Sync transactions from all connected banks
+  const handleSyncTransactions = useCallback(async () => {
+    if (!user) return
+    
+    setIsSyncing(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error('No session')
+
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/plaid-sync-transactions`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      )
+
+      const data = await response.json()
+      
+      if (data.success) {
+        toast({
+          title: '✅ Sync Complete!',
+          description: `Synced ${data.transactions_synced} transactions from ${data.items_synced} bank(s).`,
+        })
+        // Refresh accounts to get updated balances
+        fetchAccounts(user.id)
+      } else {
+        throw new Error(data.error || 'Sync failed')
+      }
+    } catch (error) {
+      console.error('Error syncing transactions:', error)
+      toast({
+        title: 'Sync Failed',
+        description: error instanceof Error ? error.message : 'Failed to sync transactions',
+        variant: 'destructive',
+      })
+    } finally {
+      setIsSyncing(false)
+    }
+  }, [user, toast, fetchAccounts])
 
   // Fetch Plaid link token
   const fetchLinkToken = useCallback(async () => {
@@ -340,9 +385,13 @@ export default function AccountsPage() {
           <p className="text-muted-foreground">Manage your connected accounts</p>
         </div>
         <div className="flex gap-3">
-          <Button variant="outline">
-            <RefreshCw className="w-4 h-4 mr-2" />
-            Sync All
+          <Button 
+            variant="outline" 
+            onClick={handleSyncTransactions}
+            disabled={isSyncing}
+          >
+            <RefreshCw className={`w-4 h-4 mr-2 ${isSyncing ? 'animate-spin' : ''}`} />
+            {isSyncing ? 'Syncing...' : 'Sync All'}
           </Button>
           <Button onClick={() => setShowAddDialog(true)}>
             <Plus className="w-4 h-4 mr-2" />
