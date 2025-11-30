@@ -1,14 +1,33 @@
-import OpenAI from 'openai'
+import { supabase } from './supabase'
 
-const apiKey = import.meta.env.VITE_OPENAI_API_KEY || ''
+// Helper to call the secure OpenAI Edge Function
+async function callOpenAI(messages: Array<{ role: string; content: string }>, type: 'chat' | 'categorize' | 'insights' = 'chat'): Promise<string> {
+  const { data: { session } } = await supabase.auth.getSession()
+  
+  if (!session) {
+    throw new Error('Not authenticated')
+  }
 
-// Log if API key is configured (don't log the actual key!)
-console.log('🤖 OpenAI API Key configured:', apiKey ? `Yes (${apiKey.slice(0, 10)}...)` : 'NO - Missing!')
+  const response = await fetch(
+    `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/openai-chat`,
+    {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${session.access_token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ messages, type }),
+    }
+  )
 
-const openai = new OpenAI({
-  apiKey: apiKey,
-  dangerouslyAllowBrowser: true, // We'll move to backend in production
-})
+  if (!response.ok) {
+    const errorData = await response.json()
+    throw new Error(errorData.error || `API error: ${response.status}`)
+  }
+
+  const data = await response.json()
+  return data.content
+}
 
 export interface CategorizedTransaction {
   category: string
@@ -38,14 +57,10 @@ Respond in JSON format with:
 JSON only, no explanation:`
 
   try {
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.3,
-      max_tokens: 200,
-    })
-
-    const content = response.choices[0]?.message?.content || '{}'
+    const content = await callOpenAI(
+      [{ role: 'user', content: prompt }],
+      'categorize'
+    )
     return JSON.parse(content.replace(/```json\n?|\n?```/g, ''))
   } catch (error) {
     console.error('Error categorizing transaction:', error)
@@ -86,14 +101,10 @@ Provide 3-5 actionable insights about:
 Keep it conversational and helpful, not preachy. Be specific with numbers.`
 
   try {
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.7,
-      max_tokens: 500,
-    })
-
-    return response.choices[0]?.message?.content || 'Unable to generate insights at this time.'
+    return await callOpenAI(
+      [{ role: 'user', content: prompt }],
+      'insights'
+    )
   } catch (error) {
     console.error('Error generating insights:', error)
     return 'Unable to generate insights at this time.'
@@ -119,36 +130,13 @@ ${context.bills ? `Upcoming Bills: ${JSON.stringify(context.bills)}` : ''}
 Be helpful, specific, and use actual numbers from their data when answering questions. If you don't have enough data to answer, say so.`
 
   try {
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        ...conversationHistory.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-        { role: 'user', content: message },
-      ],
-      temperature: 0.7,
-      max_tokens: 800,
-    })
-
-    return response.choices[0]?.message?.content || 'I apologize, but I was unable to process your request.'
+    return await callOpenAI([
+      { role: 'system', content: systemPrompt },
+      ...conversationHistory.map(m => ({ role: m.role, content: m.content })),
+      { role: 'user', content: message },
+    ])
   } catch (error: any) {
-    console.error('🤖 OpenAI Chat Error:', error)
-    console.error('Error details:', {
-      message: error?.message,
-      status: error?.status,
-      code: error?.code,
-      type: error?.type,
-    })
-    
-    // Return helpful error message
-    if (error?.status === 401) {
-      return 'API key is invalid or expired. Please check your OpenAI API key.'
-    } else if (error?.status === 429) {
-      return 'Rate limit exceeded or quota reached. Please check your OpenAI billing.'
-    } else if (error?.code === 'insufficient_quota') {
-      return 'Your OpenAI account has insufficient quota. Please add credits.'
-    }
-    
+    console.error('🤖 Chat Error:', error)
     return `Error: ${error?.message || 'Unknown error'}. Please try again.`
   }
 }
@@ -176,18 +164,12 @@ If you can make a reasonable guess based on patterns (similar amounts, check num
 If you can't make a reasonable guess, respond with: null`
 
   try {
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.3,
-      max_tokens: 100,
-    })
-
-    const content = response.choices[0]?.message?.content || 'null'
+    const content = await callOpenAI(
+      [{ role: 'user', content: prompt }],
+      'categorize'
+    )
     return JSON.parse(content)
   } catch {
     return null
   }
 }
-
-
