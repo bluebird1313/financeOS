@@ -89,23 +89,47 @@ export default function AccountsPage() {
   const handleSyncTransactions = useCallback(async () => {
     if (!user) return
     
+    console.log('🔄 Starting transaction sync...')
     setIsSyncing(true)
+    
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) throw new Error('No session')
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+      if (!supabaseUrl) throw new Error('Supabase URL not configured')
 
+      // Try to get access token
+      let accessToken = localStorage.getItem('plaid_pending_access_token')
+      
+      if (!accessToken) {
+        console.log('Getting session...')
+        const { data: { session } } = await supabase.auth.getSession()
+        accessToken = session?.access_token || null
+      }
+      
+      if (!accessToken) {
+        console.log('Trying refresh...')
+        const { data: { session } } = await supabase.auth.refreshSession()
+        accessToken = session?.access_token || null
+      }
+      
+      if (!accessToken) {
+        throw new Error('No session - please refresh the page')
+      }
+
+      console.log('Making sync API call...')
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/plaid-sync-transactions`,
+        `${supabaseUrl}/functions/v1/plaid-sync-transactions`,
         {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${session.access_token}`,
+            'Authorization': `Bearer ${accessToken}`,
             'Content-Type': 'application/json',
           },
         }
       )
 
+      console.log('Response status:', response.status)
       const data = await response.json()
+      console.log('Response data:', data)
       
       if (data.success) {
         toast({
