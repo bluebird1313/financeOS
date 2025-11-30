@@ -1,7 +1,12 @@
 import OpenAI from 'openai'
 
+const apiKey = import.meta.env.VITE_OPENAI_API_KEY || ''
+
+// Log if API key is configured (don't log the actual key!)
+console.log('🤖 OpenAI API Key configured:', apiKey ? `Yes (${apiKey.slice(0, 10)}...)` : 'NO - Missing!')
+
 const openai = new OpenAI({
-  apiKey: import.meta.env.VITE_OPENAI_API_KEY || '',
+  apiKey: apiKey,
   dangerouslyAllowBrowser: true, // We'll move to backend in production
 })
 
@@ -126,9 +131,25 @@ Be helpful, specific, and use actual numbers from their data when answering ques
     })
 
     return response.choices[0]?.message?.content || 'I apologize, but I was unable to process your request.'
-  } catch (error) {
-    console.error('Error in chat:', error)
-    return 'I apologize, but I encountered an error. Please try again.'
+  } catch (error: any) {
+    console.error('🤖 OpenAI Chat Error:', error)
+    console.error('Error details:', {
+      message: error?.message,
+      status: error?.status,
+      code: error?.code,
+      type: error?.type,
+    })
+    
+    // Return helpful error message
+    if (error?.status === 401) {
+      return 'API key is invalid or expired. Please check your OpenAI API key.'
+    } else if (error?.status === 429) {
+      return 'Rate limit exceeded or quota reached. Please check your OpenAI billing.'
+    } else if (error?.code === 'insufficient_quota') {
+      return 'Your OpenAI account has insufficient quota. Please add credits.'
+    }
+    
+    return `Error: ${error?.message || 'Unknown error'}. Please try again.`
   }
 }
 
