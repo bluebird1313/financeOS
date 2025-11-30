@@ -251,31 +251,55 @@ export async function readFileContent(file: File): Promise<{ content: string; ty
     const reader = new FileReader()
     
     reader.onload = async (e) => {
-      const result = e.target?.result
-      
-      if (type === 'pdf' || type === 'excel' || type === 'image') {
-        // For binary files, we'll convert to base64 and let the AI handle it
-        // In production, you'd use proper PDF/Excel parsing libraries
-        const base64 = btoa(
-          new Uint8Array(result as ArrayBuffer)
-            .reduce((data, byte) => data + String.fromCharCode(byte), '')
-        )
-        resolve({ 
-          content: `[${type.toUpperCase()} FILE - BASE64 ENCODED]\nFilename: ${file.name}\nSize: ${file.size} bytes\n\nNote: This is a binary file. The AI will attempt to extract information based on common ${type} formats.`,
-          type 
-        })
-      } else {
-        // Text files (CSV, OFX, QFX)
-        resolve({ content: result as string, type })
+      try {
+        const result = e.target?.result
+        
+        if (type === 'excel') {
+          // For Excel files, try to read as text first (some xlsx are readable)
+          // If it fails, provide file metadata for AI
+          try {
+            const textReader = new FileReader()
+            textReader.onload = (te) => {
+              const text = te.target?.result as string
+              // Check if it's readable text
+              if (text && !text.includes('\x00') && text.length > 0) {
+                resolve({ content: text, type: 'csv' }) // Treat readable excel as CSV
+              } else {
+                resolve({ 
+                  content: `[EXCEL FILE]\nFilename: ${file.name}\nSize: ${file.size} bytes\n\nNote: Please export this Excel file as CSV format for better processing. The AI cannot directly read binary Excel files.`,
+                  type 
+                })
+              }
+            }
+            textReader.onerror = () => {
+              resolve({ 
+                content: `[EXCEL FILE]\nFilename: ${file.name}\nSize: ${file.size} bytes\n\nNote: Please export this Excel file as CSV format for better processing.`,
+                type 
+              })
+            }
+            textReader.readAsText(file)
+          } catch {
+            resolve({ 
+              content: `[EXCEL FILE]\nFilename: ${file.name}\nSize: ${file.size} bytes\n\nNote: Please export this Excel file as CSV format for better processing.`,
+              type 
+            })
+          }
+        } else if (type === 'pdf' || type === 'image') {
+          // For PDF and images, we can't parse them client-side
+          resolve({ 
+            content: `[${type.toUpperCase()} FILE]\nFilename: ${file.name}\nSize: ${file.size} bytes\n\nNote: For PDF and image files, please copy the text content or use a CSV/Excel export from your bank.`,
+            type 
+          })
+        } else {
+          // Text files (CSV, OFX, QFX)
+          resolve({ content: result as string, type })
+        }
+      } catch (err) {
+        reject(new Error(`Failed to process file: ${err}`))
       }
     }
     
     reader.onerror = () => reject(new Error('Failed to read file'))
-    
-    if (type === 'pdf' || type === 'excel' || type === 'image') {
-      reader.readAsArrayBuffer(file)
-    } else {
-      reader.readAsText(file)
-    }
+    reader.readAsText(file)
   })
 }
