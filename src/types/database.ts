@@ -475,4 +475,53 @@ export type Bill = Database['public']['Tables']['bills']['Row']
 export type Alert = Database['public']['Tables']['alerts']['Row']
 export type UserPreferences = Database['public']['Tables']['user_preferences']['Row']
 
+// Document Import types
+export interface DocumentImport {
+  id: string
+  user_id: string
+  file_name: string
+  file_type: string
+  file_size: number | null
+  storage_path: string | null
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'needs_review'
+  source_type: string | null
+  detected_account_id: string | null
+  detected_institution: string | null
+  transactions_found: number
+  transactions_imported: number
+  transactions_pending_review: number
+  error_message: string | null
+  ai_summary: string | null
+  processed_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PendingImportItem {
+  id: string
+  user_id: string
+  document_import_id: string | null
+  item_type: 'transaction' | 'check' | 'bill' | 'transfer'
+  date: string
+  amount: number
+  description: string
+  merchant_name: string | null
+  suggested_account_id: string | null
+  suggested_category_id: string | null
+  suggested_business_id: string | null
+  is_business_expense: boolean
+  check_number: string | null
+  payee: string | null
+  memo: string | null
+  ai_confidence: number
+  ai_notes: string | null
+  needs_review_reason: string | null
+  status: 'pending' | 'approved' | 'rejected' | 'modified' | 'duplicate'
+  reviewed_at: string | null
+  imported_transaction_id: string | null
+  imported_check_id: string | null
+  created_at: string
+  updated_at: string
+}
+
 

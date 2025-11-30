@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Life Financial OS - Plaid Icon Generator</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #0a0f1a 0%, #111827 100%);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px;
+      color: #f9fafb;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 8px;
+      color: #10B981;
+    }
+    p {
+      color: #9ca3af;
+      margin-bottom: 30px;
+    }
+    .preview-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 30px;
+    }
+    .preview {
+      border: 2px solid #1f2937;
+      border-radius: 24px;
+      overflow: hidden;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    }
+    canvas {
+      display: block;
+    }
+    .info {
+      background: #1f2937;
+      padding: 20px 30px;
+      border-radius: 12px;
+      text-align: center;
+    }
+    .info span {
+      color: #10B981;
+      font-weight: 600;
+    }
+    .buttons {
+      display: flex;
+      gap: 15px;
+      margin-top: 20px;
+    }
+    button {
+      background: #10B981;
+      color: #0a0f1a;
+      border: none;
+      padding: 14px 28px;
+      font-size: 16px;
+      font-weight: 600;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    button:hover {
+      background: #059669;
+      transform: translateY(-2px);
+    }
+    button.secondary {
+      background: #1f2937;
+      color: #f9fafb;
+      border: 1px solid #374151;
+    }
+    button.secondary:hover {
+      background: #374151;
+    }
+    .color-box {
+      margin-top: 40px;
+      padding: 30px;
+      background: #1f2937;
+      border-radius: 12px;
+      text-align: center;
+    }
+    .color-box h2 {
+      font-size: 18px;
+      margin-bottom: 15px;
+      color: #f9fafb;
+    }
+    .color-swatch {
+      width: 120px;
+      height: 60px;
+      background: #10B981;
+      border-radius: 8px;
+      margin: 0 auto 15px;
+      box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);
+    }
+    .color-code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 20px;
+      color: #10B981;
+      background: #111827;
+      padding: 10px 20px;
+      border-radius: 6px;
+      display: inline-block;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .color-code:hover {
+      background: #0a0f1a;
+    }
+    .copied {
+      color: #9ca3af;
+      font-size: 14px;
+      margin-top: 10px;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .copied.show {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <h1>Life Financial OS</h1>
+  <p>Plaid App Icon Generator (1024 × 1024 px)</p>
+  
+  <div class="preview-container">
+    <div class="preview">
+      <canvas id="iconCanvas" width="1024" height="1024"></canvas>
+    </div>
+    
+    <div class="info">
+      <div>Size: <span>1024 × 1024 px</span> | Format: <span>PNG</span></div>
+      <div class="buttons">
+        <button onclick="downloadIcon()">⬇ Download Icon</button>
+        <button class="secondary" onclick="regenerate()">🔄 Regenerate</button>
+      </div>
+    </div>
+  </div>
+  
+  <div class="color-box">
+    <h2>Brand Color for Plaid</h2>
+    <div class="color-swatch"></div>
+    <div class="color-code" onclick="copyColor()">#10B981</div>
+    <div class="copied" id="copiedMsg">Copied to clipboard!</div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('iconCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    function drawIcon() {
+      const size = 1024;
+      const center = size / 2;
+      
+      // Background - Dark gradient
+      const bgGrad = ctx.createRadialGradient(center, center, 0, center, center, size * 0.8);
+      bgGrad.addColorStop(0, '#111827');
+      bgGrad.addColorStop(0.5, '#0d1320');
+      bgGrad.addColorStop(1, '#080c14');
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, size, size);
+      
+      // Subtle grid pattern
+      ctx.strokeStyle = 'rgba(16, 185, 129, 0.03)';
+      ctx.lineWidth = 1;
+      for (let i = 0; i < size; i += 40) {
+        ctx.beginPath();
+        ctx.moveTo(i, 0);
+        ctx.lineTo(i, size);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, i);
+        ctx.lineTo(size, i);
+        ctx.stroke();
+      }
+      
+      // Outer glow ring
+      const glowGrad = ctx.createRadialGradient(center, center, 280, center, center, 420);
+      glowGrad.addColorStop(0, 'rgba(16, 185, 129, 0)');
+      glowGrad.addColorStop(0.5, 'rgba(16, 185, 129, 0.15)');
+      glowGrad.addColorStop(1, 'rgba(16, 185, 129, 0)');
+      ctx.fillStyle = glowGrad;
+      ctx.fillRect(0, 0, size, size);
+      
+      // Main circle background
+      ctx.beginPath();
+      ctx.arc(center, center, 320, 0, Math.PI * 2);
+      const circleGrad = ctx.createRadialGradient(center - 100, center - 100, 0, center, center, 350);
+      circleGrad.addColorStop(0, '#1f2937');
+      circleGrad.addColorStop(1, '#111827');
+      ctx.fillStyle = circleGrad;
+      ctx.fill();
+      
+      // Circle border
+      ctx.beginPath();
+      ctx.arc(center, center, 320, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(16, 185, 129, 0.3)';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      
+      // "L" shape - representing Life Financial
+      ctx.beginPath();
+      // Vertical bar of L
+      const lX = center - 120;
+      const lY = center - 150;
+      const lWidth = 60;
+      const lHeight = 300;
+      const lBottomWidth = 240;
+      const lBottomHeight = 60;
+      const radius = 20;
+      
+      // Draw L shape with rounded corners
+      ctx.beginPath();
+      ctx.moveTo(lX + radius, lY);
+      ctx.lineTo(lX + lWidth - radius, lY);
+      ctx.quadraticCurveTo(lX + lWidth, lY, lX + lWidth, lY + radius);
+      ctx.lineTo(lX + lWidth, lY + lHeight - lBottomHeight);
+      ctx.lineTo(lX + lBottomWidth - radius, lY + lHeight - lBottomHeight);
+      ctx.quadraticCurveTo(lX + lBottomWidth, lY + lHeight - lBottomHeight, lX + lBottomWidth, lY + lHeight - lBottomHeight + radius);
+      ctx.lineTo(lX + lBottomWidth, lY + lHeight - radius);
+      ctx.quadraticCurveTo(lX + lBottomWidth, lY + lHeight, lX + lBottomWidth - radius, lY + lHeight);
+      ctx.lineTo(lX + radius, lY + lHeight);
+      ctx.quadraticCurveTo(lX, lY + lHeight, lX, lY + lHeight - radius);
+      ctx.lineTo(lX, lY + radius);
+      ctx.quadraticCurveTo(lX, lY, lX + radius, lY);
+      ctx.closePath();
+      
+      // L gradient fill
+      const lGrad = ctx.createLinearGradient(lX, lY, lX + lBottomWidth, lY + lHeight);
+      lGrad.addColorStop(0, '#10B981');
+      lGrad.addColorStop(0.5, '#059669');
+      lGrad.addColorStop(1, '#047857');
+      ctx.fillStyle = lGrad;
+      ctx.fill();
+      
+      // L glow effect
+      ctx.shadowColor = '#10B981';
+      ctx.shadowBlur = 40;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      
+      // Small financial chart lines inside the L bottom area
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      
+      // Chart line 1
+      ctx.beginPath();
+      ctx.moveTo(lX + 80, lY + lHeight - 25);
+      ctx.lineTo(lX + 110, lY + lHeight - 40);
+      ctx.lineTo(lX + 140, lY + lHeight - 30);
+      ctx.lineTo(lX + 170, lY + lHeight - 45);
+      ctx.lineTo(lX + 200, lY + lHeight - 35);
+      ctx.stroke();
+      
+      // Upward arrow on the chart
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(lX + 200, lY + lHeight - 35);
+      ctx.lineTo(lX + 215, lY + lHeight - 50);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(lX + 205, lY + lHeight - 50);
+      ctx.lineTo(lX + 215, lY + lHeight - 50);
+      ctx.lineTo(lX + 215, lY + lHeight - 40);
+      ctx.stroke();
+      
+      // OS text indicator dots
+      const dotY = center + 200;
+      const dotSpacing = 30;
+      const dotRadius = 8;
+      const startDotX = center - dotSpacing * 1.5;
+      
+      for (let i = 0; i < 4; i++) {
+        ctx.beginPath();
+        ctx.arc(startDotX + i * dotSpacing, dotY, dotRadius, 0, Math.PI * 2);
+        if (i === 0) {
+          ctx.fillStyle = '#10B981';
+        } else {
+          ctx.fillStyle = 'rgba(16, 185, 129, 0.3)';
+        }
+        ctx.fill();
+      }
+    }
+    
+    function downloadIcon() {
+      const link = document.createElement('a');
+      link.download = 'life-financial-os-icon-1024x1024.png';
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    }
+    
+    function regenerate() {
+      ctx.clearRect(0, 0, 1024, 1024);
+      drawIcon();
+    }
+    
+    function copyColor() {
+      navigator.clipboard.writeText('#10B981');
+      const msg = document.getElementById('copiedMsg');
+      msg.classList.add('show');
+      setTimeout(() => msg.classList.remove('show'), 2000);
+    }
+    
+    // Initial draw
+    drawIcon();
+  </script>
+</body>
+</html>
+

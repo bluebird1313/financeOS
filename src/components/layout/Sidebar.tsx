@@ -22,7 +22,7 @@ const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Accounts', href: '/accounts', icon: Wallet },
   { name: 'Transactions', href: '/transactions', icon: ArrowLeftRight },
-  { name: 'Checks', href: '/checks', icon: FileCheck },
+  { name: 'Import Center', href: '/checks', icon: FileCheck },
   { name: 'Bills & Subs', href: '/bills', icon: Receipt },
   { name: 'Cash Flow', href: '/cash-flow', icon: TrendingUp },
   { name: 'Business', href: '/business', icon: Building2 },
