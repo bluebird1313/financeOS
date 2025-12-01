@@ -135,6 +135,9 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
     cleanedMerchant: string
     selected: boolean
   }>>([])
+  
+  // Pagination for large imports
+  const [visibleCount, setVisibleCount] = useState(50)
 
   // Reset wizard state
   const resetWizard = useCallback(() => {
@@ -153,6 +156,7 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
     setSaveAsProfile(false)
     setProfileName('')
     setStagedTransactions([])
+    setVisibleCount(50)
     setImportResults({ total: 0, imported: 0, duplicates: 0, errors: 0 })
   }, [])
 
@@ -964,8 +968,19 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
                     </div>
                   </CardHeader>
                   <CardContent>
+                    {/* Summary for large imports */}
+                    {stagedTransactions.length > 100 && (
+                      <div className="mb-4 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg text-sm">
+                        <p className="font-medium text-blue-400">Large Import Detected</p>
+                        <p className="text-muted-foreground">
+                          Showing {Math.min(visibleCount, stagedTransactions.length)} of {stagedTransactions.length} transactions. 
+                          All {stagedTransactions.filter(t => t.selected && !t.isDuplicate).length} selected transactions will be imported.
+                        </p>
+                      </div>
+                    )}
+                    
                     <div className="space-y-2 max-h-[300px] overflow-y-auto">
-                      {stagedTransactions.map((staged, idx) => (
+                      {stagedTransactions.slice(0, visibleCount).map((staged, idx) => (
                         <div
                           key={idx}
                           className={`
@@ -1010,6 +1025,18 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
                           </div>
                         </div>
                       ))}
+                      
+                      {/* Load More Button */}
+                      {visibleCount < stagedTransactions.length && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full mt-2"
+                          onClick={() => setVisibleCount(prev => Math.min(prev + 50, stagedTransactions.length))}
+                        >
+                          Show More ({stagedTransactions.length - visibleCount} remaining)
+                        </Button>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
