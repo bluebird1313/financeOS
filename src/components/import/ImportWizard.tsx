@@ -347,35 +347,48 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
     let imported = 0
     let errors = 0
     
-    for (const staged of selectedTransactions) {
-      const t = staged.transaction
-      
+    // Batch insert for better performance (100 at a time)
+    const BATCH_SIZE = 100
+    const batches = []
+    
+    for (let i = 0; i < selectedTransactions.length; i += BATCH_SIZE) {
+      batches.push(selectedTransactions.slice(i, i + BATCH_SIZE))
+    }
+    
+    for (const batch of batches) {
       try {
-        // Create transaction
-        const { error } = await supabase.from('transactions').insert({
-          user_id: user.id,
-          account_id: selectedAccountId,
-          amount: t.amount,
-          date: t.date,
-          name: t.description,
-          merchant_name: staged.cleanedMerchant || null,
-          category_id: staged.category?.id || null,
-          check_number: t.checkNumber || null,
-          is_manual: true,
-          notes: t.memo || null,
-          business_id: selectedEntityId || null,
-          plaid_transaction_id: t.referenceId || null, // Use for dedup
+        const transactionsToInsert = batch.map(staged => {
+          const t = staged.transaction
+          return {
+            user_id: user.id,
+            account_id: selectedAccountId,
+            amount: t.amount,
+            date: t.date,
+            name: t.description,
+            merchant_name: staged.cleanedMerchant || null,
+            category_id: staged.category?.id || null,
+            check_number: t.checkNumber || null,
+            is_manual: true,
+            notes: t.memo || null,
+            business_id: selectedEntityId || null,
+            plaid_transaction_id: t.referenceId || null,
+          }
         })
         
+        const { data, error } = await supabase
+          .from('transactions')
+          .insert(transactionsToInsert)
+          .select('id')
+        
         if (error) {
-          console.error('Error importing transaction:', error)
-          errors++
+          console.error('Error importing batch:', error)
+          errors += batch.length
         } else {
-          imported++
+          imported += data?.length || batch.length
         }
       } catch (err) {
-        console.error('Error importing transaction:', err)
-        errors++
+        console.error('Error importing batch:', err)
+        errors += batch.length
       }
     }
     
