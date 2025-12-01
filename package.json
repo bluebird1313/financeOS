@@ -54,6 +54,7 @@
     "tailwindcss-animate": "^1.0.7",
     "tesseract.js": "^5.0.4",
     "uuid": "^9.0.1",
+    "xlsx": "^0.18.5",
     "zustand": "^4.4.7"
   },
   "devDependencies": {
@@ -95,5 +96,3 @@
     }
   }
 }
-
-

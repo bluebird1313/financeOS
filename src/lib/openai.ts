@@ -141,6 +141,121 @@ Be helpful, specific, and use actual numbers from their data when answering ques
   }
 }
 
+// Batch categorize multiple transactions (for import)
+export interface BatchCategorizeResult {
+  transactions: Array<{
+    index: number
+    category: string
+    cleanedMerchant: string
+    confidence: number
+    isBusinessExpense: boolean
+  }>
+}
+
+export async function batchCategorizeTransactions(
+  transactions: Array<{
+    index: number
+    description: string
+    amount: number
+    date?: string
+  }>,
+  categories: Array<{ id: string; name: string }>
+): Promise<BatchCategorizeResult> {
+  const categoryList = categories.map(c => c.name).join(', ')
+  
+  const transactionList = transactions.slice(0, 50).map(t => 
+    `${t.index}. "${t.description}" $${Math.abs(t.amount).toFixed(2)}`
+  ).join('\n')
+
+  const prompt = `Categorize these transactions and clean up merchant names. Available categories: ${categoryList}
+
+Transactions:
+${transactionList}
+
+For each transaction, provide:
+- index: the transaction number
+- category: best matching category from the list
+- cleanedMerchant: clean, readable merchant name (e.g., "AMZN MKTP US*2K4" → "Amazon")
+- confidence: 0-1 score
+- isBusinessExpense: boolean
+
+Return JSON array only:
+[{"index": 1, "category": "Shopping", "cleanedMerchant": "Amazon", "confidence": 0.95, "isBusinessExpense": false}, ...]`
+
+  try {
+    const content = await callOpenAI(
+      [{ role: 'user', content: prompt }],
+      'categorize'
+    )
+    
+    const parsed = JSON.parse(content.replace(/```json\n?|\n?```/g, ''))
+    return { transactions: Array.isArray(parsed) ? parsed : [] }
+  } catch (error) {
+    console.error('Error batch categorizing:', error)
+    return { transactions: [] }
+  }
+}
+
+// AI-assisted column mapping for CSV imports
+export interface ColumnMappingSuggestion {
+  mappings: Record<string, string>
+  confidence: number
+  dateFormat?: string
+  notes?: string
+}
+
+export async function suggestColumnMappings(
+  headers: string[],
+  sampleRows: string[][]
+): Promise<ColumnMappingSuggestion> {
+  const sampleData = sampleRows.slice(0, 3).map((row, i) => 
+    `Row ${i + 1}: ${row.join(' | ')}`
+  ).join('\n')
+
+  const prompt = `Analyze this CSV data and suggest column mappings for a bank transaction import.
+
+Headers: ${headers.join(' | ')}
+
+Sample Data:
+${sampleData}
+
+Map each header to one of these fields (or "skip"):
+- date: Transaction date
+- amount: Single amount column (negative for debits)
+- debit: Withdrawal/debit amount
+- credit: Deposit/credit amount  
+- description: Transaction description/name
+- memo: Additional notes
+- checkNumber: Check number
+- balance: Running balance (usually skip)
+- referenceId: Transaction ID
+- skip: Ignore this column
+
+Respond with JSON:
+{
+  "mappings": {"Header Name": "field_name", ...},
+  "confidence": 0-1,
+  "dateFormat": "MM/DD/YYYY" or "YYYY-MM-DD" etc,
+  "notes": "any observations about the format"
+}`
+
+  try {
+    const content = await callOpenAI(
+      [{ role: 'user', content: prompt }],
+      'categorize'
+    )
+    
+    return JSON.parse(content.replace(/```json\n?|\n?```/g, ''))
+  } catch (error) {
+    console.error('Error suggesting mappings:', error)
+    return {
+      mappings: {},
+      confidence: 0,
+      notes: 'Could not auto-detect mappings'
+    }
+  }
+}
+
 export async function suggestCheckPayee(
   checkNumber: string,
   amount: number,

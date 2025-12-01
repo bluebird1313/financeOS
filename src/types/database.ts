@@ -524,4 +524,52 @@ export interface PendingImportItem {
   updated_at: string
 }
 
+// Import Profile for saved column mappings
+export interface ImportProfile {
+  id: string
+  user_id: string
+  name: string
+  file_type: 'csv' | 'xlsx' | 'xls' | 'qbo' | 'qfx' | 'ofx'
+  column_mappings: Record<string, string> | null
+  date_format: string | null
+  has_header_row: boolean
+  skip_rows: number
+  amount_is_negative_for_debits: boolean
+  has_separate_debit_credit: boolean
+  default_account_id: string | null
+  default_entity_id: string | null
+  ai_category_rules: Record<string, string>
+  created_at: string
+  updated_at: string
+}
+
+// Import Session tracking
+export interface ImportSession {
+  id: string
+  user_id: string
+  import_profile_id: string | null
+  file_name: string
+  file_type: string
+  file_size: number | null
+  status: 'pending' | 'mapping' | 'reviewing' | 'importing' | 'completed' | 'failed'
+  total_rows: number
+  transactions_created: number
+  duplicates_skipped: number
+  errors_count: number
+  target_account_id: string | null
+  target_entity_id: string | null
+  error_message: string | null
+  import_summary: Record<string, unknown> | null
+  created_at: string
+  completed_at: string | null
+}
+
+// Extended Business type with entity features
+export interface FinancialEntity extends Business {
+  entity_type?: 'personal' | 'business' | 'side_hustle' | 'rental' | 'investment'
+  icon?: string
+  color?: string
+  is_default?: boolean
+}
+
 
