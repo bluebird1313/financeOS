@@ -1491,14 +1491,14 @@ export default function ChecksPage() {
                 <div className="space-y-2">
                   <Label htmlFor="business">Business (Optional)</Label>
                   <Select
-                    value={formData.business_id}
-                    onValueChange={(value) => setFormData(prev => ({ ...prev, business_id: value }))}
+                    value={formData.business_id || '_personal'}
+                    onValueChange={(value) => setFormData(prev => ({ ...prev, business_id: value === '_personal' ? '' : value }))}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Personal" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">Personal</SelectItem>
+                      <SelectItem value="_personal">Personal</SelectItem>
                       {businesses.map(business => (
                         <SelectItem key={business.id} value={business.id}>{business.name}</SelectItem>
                       ))}
@@ -1642,14 +1642,14 @@ export default function ChecksPage() {
                 <div className="space-y-2">
                   <Label>Business</Label>
                   <Select
-                    value={editForm.business_id}
-                    onValueChange={(value) => setEditForm(prev => ({ ...prev, business_id: value }))}
+                    value={editForm.business_id || '_personal'}
+                    onValueChange={(value) => setEditForm(prev => ({ ...prev, business_id: value === '_personal' ? '' : value }))}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Personal" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">Personal</SelectItem>
+                      <SelectItem value="_personal">Personal</SelectItem>
                       {businesses.map(business => (
                         <SelectItem key={business.id} value={business.id}>{business.name}</SelectItem>
                       ))}

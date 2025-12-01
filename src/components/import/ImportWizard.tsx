@@ -874,12 +874,12 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
                       
                       <div className="space-y-2">
                         <Label>Entity (Optional)</Label>
-                        <Select value={selectedEntityId} onValueChange={setSelectedEntityId}>
+                        <Select value={selectedEntityId || '_personal'} onValueChange={(v) => setSelectedEntityId(v === '_personal' ? '' : v)}>
                           <SelectTrigger>
                             <SelectValue placeholder="Personal" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="">Personal</SelectItem>
+                            <SelectItem value="_personal">Personal</SelectItem>
                             {businesses.map(biz => (
                               <SelectItem key={biz.id} value={biz.id}>
                                 {biz.name}

@@ -714,16 +714,16 @@ export default function AccountsPage() {
               <div className="space-y-2">
                 <Label htmlFor="business">Assign to Business (Optional)</Label>
                 <Select
-                  value={formData.business_id}
+                  value={formData.business_id || '_personal'}
                   onValueChange={(value) => 
-                    setFormData(prev => ({ ...prev, business_id: value }))
+                    setFormData(prev => ({ ...prev, business_id: value === '_personal' ? '' : value }))
                   }
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Personal Account" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Personal Account</SelectItem>
+                    <SelectItem value="_personal">Personal Account</SelectItem>
                     {businesses.map(business => (
                       <SelectItem key={business.id} value={business.id}>
                         {business.name}
