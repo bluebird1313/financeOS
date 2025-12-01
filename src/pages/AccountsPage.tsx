@@ -69,7 +69,7 @@ const accountTypeColors = {
 
 export default function AccountsPage() {
   const { user } = useAuthStore()
-  const { accounts, businesses, addAccount, updateAccount, isLoadingAccounts, fetchAccounts } = useFinancialStore()
+  const { accounts, businesses, addAccount, updateAccount, deleteAccount, isLoadingAccounts, fetchAccounts } = useFinancialStore()
   const { toast } = useToast()
   
   const [showAddDialog, setShowAddDialog] = useState(false)
@@ -629,7 +629,26 @@ export default function AccountsPage() {
                                 </>
                               )}
                             </DropdownMenuItem>
-                            <DropdownMenuItem className="text-destructive">
+                            <DropdownMenuItem 
+                              className="text-destructive"
+                              onClick={async () => {
+                                if (confirm(`Are you sure you want to remove "${account.name}"? This action cannot be undone.`)) {
+                                  const success = await deleteAccount(account.id)
+                                  if (success) {
+                                    toast({
+                                      title: 'Account removed',
+                                      description: `${account.name} has been removed.`,
+                                    })
+                                  } else {
+                                    toast({
+                                      title: 'Error',
+                                      description: 'Failed to remove account. Please try again.',
+                                      variant: 'destructive',
+                                    })
+                                  }
+                                }
+                              }}
+                            >
                               <Trash2 className="w-4 h-4 mr-2" />
                               Remove
                             </DropdownMenuItem>

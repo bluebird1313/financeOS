@@ -61,8 +61,9 @@ export default function AssistantPage() {
     setIsLoading(true)
 
     try {
+      // Limit context to prevent timeouts with large datasets
       const context = {
-        transactions: transactions.slice(0, 100).map(t => ({
+        transactions: transactions.slice(0, 50).map(t => ({
           description: t.name,
           amount: t.amount,
           date: t.date,
@@ -72,7 +73,7 @@ export default function AssistantPage() {
           name: a.name,
           balance: a.current_balance,
         })),
-        bills: bills.map(b => ({
+        bills: bills.slice(0, 20).map(b => ({
           name: b.name,
           amount: b.amount,
           dueDate: b.due_date,
@@ -84,7 +85,15 @@ export default function AssistantPage() {
         content: m.content,
       }))
 
-      const response = await chatWithAssistant(input.trim(), context, history)
+      // Add timeout to prevent infinite loading
+      const timeoutPromise = new Promise<string>((_, reject) => 
+        setTimeout(() => reject(new Error('Request timed out')), 30000)
+      )
+      
+      const response = await Promise.race([
+        chatWithAssistant(input.trim(), context, history),
+        timeoutPromise
+      ])
 
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
@@ -94,11 +103,14 @@ export default function AssistantPage() {
       }
 
       setMessages(prev => [...prev, assistantMessage])
-    } catch (error) {
+    } catch (error: any) {
+      console.error('Chat error:', error)
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: 'I apologize, but I encountered an error processing your request. Please try again.',
+        content: error?.message === 'Request timed out' 
+          ? 'The request took too long. Please try a simpler question or try again.'
+          : 'I apologize, but I encountered an error processing your request. Please try again.',
         timestamp: new Date(),
       }
       setMessages(prev => [...prev, errorMessage])

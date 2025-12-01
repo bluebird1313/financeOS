@@ -46,6 +46,7 @@ interface FinancialState {
   // Mutations
   addAccount: (account: Partial<Account>) => Promise<Account | null>
   updateAccount: (id: string, updates: Partial<Account>) => Promise<void>
+  deleteAccount: (id: string) => Promise<boolean>
   addTransaction: (transaction: Partial<Transaction>) => Promise<Transaction | null>
   updateTransaction: (id: string, updates: Partial<Transaction>) => Promise<void>
   addCheck: (check: Partial<Check>) => Promise<Check | null>
@@ -267,6 +268,24 @@ export const useFinancialStore = create<FinancialState>((set, get) => ({
       }))
     } catch (error) {
       console.error('Error updating account:', error)
+    }
+  },
+
+  deleteAccount: async (id) => {
+    try {
+      const { error } = await supabase
+        .from('accounts')
+        .delete()
+        .eq('id', id)
+      
+      if (error) throw error
+      set(state => ({
+        accounts: state.accounts.filter(a => a.id !== id),
+      }))
+      return true
+    } catch (error) {
+      console.error('Error deleting account:', error)
+      return false
     }
   },
 
