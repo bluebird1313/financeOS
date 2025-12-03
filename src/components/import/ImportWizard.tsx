@@ -328,9 +328,20 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
 
   // Perform the actual import
   const handleImport = useCallback(async () => {
-    if (!user || !selectedAccountId) return
+    console.log('handleImport started', { user: user?.id, selectedAccountId })
+    
+    if (!user || !selectedAccountId) {
+      console.error('Missing user or account:', { user, selectedAccountId })
+      toast({
+        title: 'Error',
+        description: 'Missing user or account information.',
+        variant: 'destructive',
+      })
+      return
+    }
     
     const selectedTransactions = stagedTransactions.filter(t => t.selected && !t.isDuplicate)
+    console.log('Selected transactions:', selectedTransactions.length)
     
     if (selectedTransactions.length === 0) {
       toast({
@@ -355,10 +366,14 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
       batches.push(selectedTransactions.slice(i, i + BATCH_SIZE))
     }
     
+    console.log('Processing', batches.length, 'batches')
+    
     for (const batch of batches) {
       try {
         const transactionsToInsert = batch.map(staged => {
           const t = staged.transaction
+          // Fix: suggestCategory returns { categoryId, confidence }, not { id, name }
+          const categoryId = (staged.category as any)?.categoryId || (staged.category as any)?.id || null
           return {
             user_id: user.id,
             account_id: selectedAccountId,
@@ -366,7 +381,7 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
             date: t.date,
             name: t.description,
             merchant_name: staged.cleanedMerchant || null,
-            category_id: staged.category?.id || null,
+            category_id: categoryId,
             check_number: t.checkNumber || null,
             is_manual: true,
             notes: t.memo || null,
@@ -375,22 +390,30 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
           }
         })
         
+        console.log('Inserting batch:', transactionsToInsert.length, 'transactions')
+        console.log('First transaction:', transactionsToInsert[0])
+        
         const { data, error } = await supabase
           .from('transactions')
           .insert(transactionsToInsert)
           .select('id')
+        
+        console.log('Insert result:', { data, error })
         
         if (error) {
           console.error('Error importing batch:', error)
           errors += batch.length
         } else {
           imported += data?.length || batch.length
+          console.log('Batch imported successfully:', imported, 'total')
         }
       } catch (err) {
-        console.error('Error importing batch:', err)
+        console.error('Exception importing batch:', err)
         errors += batch.length
       }
     }
+    
+    console.log('Import complete:', { imported, errors })
     
     // Save profile if requested
     if (saveAsProfile && profileName && file && (fileType === 'csv' || fileType === 'xlsx')) {
