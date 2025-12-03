@@ -65,8 +65,6 @@ export interface Database {
           id: string
           user_id: string
           business_id: string | null
-          plaid_account_id: string | null
-          plaid_item_id: string | null
           name: string
           official_name: string | null
           type: 'checking' | 'savings' | 'credit' | 'loan' | 'investment' | 'other'
@@ -87,8 +85,6 @@ export interface Database {
           id?: string
           user_id: string
           business_id?: string | null
-          plaid_account_id?: string | null
-          plaid_item_id?: string | null
           name: string
           official_name?: string | null
           type: 'checking' | 'savings' | 'credit' | 'loan' | 'investment' | 'other'
@@ -115,40 +111,29 @@ export interface Database {
           last_synced_at?: string | null
         }
       }
-      plaid_items: {
+      projects: {
         Row: {
           id: string
           user_id: string
-          access_token: string
-          item_id: string
-          institution_id: string | null
-          institution_name: string | null
-          status: 'active' | 'error' | 'pending'
-          error_code: string | null
-          error_message: string | null
-          consent_expiration_time: string | null
+          name: string
+          color: string
+          is_active: boolean
           created_at: string
           updated_at: string
         }
         Insert: {
           id?: string
           user_id: string
-          access_token: string
-          item_id: string
-          institution_id?: string | null
-          institution_name?: string | null
-          status?: 'active' | 'error' | 'pending'
-          error_code?: string | null
-          error_message?: string | null
-          consent_expiration_time?: string | null
+          name: string
+          color?: string
+          is_active?: boolean
           created_at?: string
           updated_at?: string
         }
         Update: {
-          access_token?: string
-          status?: 'active' | 'error' | 'pending'
-          error_code?: string | null
-          error_message?: string | null
+          name?: string
+          color?: string
+          is_active?: boolean
           updated_at?: string
         }
       }
@@ -157,7 +142,8 @@ export interface Database {
           id: string
           user_id: string
           account_id: string
-          plaid_transaction_id: string | null
+          external_reference_id: string | null
+          project_id: string | null
           amount: number
           date: string
           name: string
@@ -182,7 +168,8 @@ export interface Database {
           id?: string
           user_id: string
           account_id: string
-          plaid_transaction_id?: string | null
+          external_reference_id?: string | null
+          project_id?: string | null
           amount: number
           date: string
           name: string
@@ -207,6 +194,7 @@ export interface Database {
           category_id?: string | null
           notes?: string | null
           business_id?: string | null
+          project_id?: string | null
           is_business_expense?: boolean
           tax_category?: string | null
           updated_at?: string
@@ -466,7 +454,7 @@ export interface Database {
 export type User = Database['public']['Tables']['users']['Row']
 export type Business = Database['public']['Tables']['businesses']['Row']
 export type Account = Database['public']['Tables']['accounts']['Row']
-export type PlaidItem = Database['public']['Tables']['plaid_items']['Row']
+export type Project = Database['public']['Tables']['projects']['Row']
 export type Transaction = Database['public']['Tables']['transactions']['Row']
 export type Category = Database['public']['Tables']['categories']['Row']
 export type Check = Database['public']['Tables']['checks']['Row']

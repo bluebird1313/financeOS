@@ -45,8 +45,6 @@ export default function SettingsPage() {
   })
 
   const [apiKeys, setApiKeys] = useState({
-    plaid_client_id: '',
-    plaid_secret: '',
     openai_api_key: '',
   })
 
@@ -294,28 +292,6 @@ export default function SettingsPage() {
                   </div>
                   
                   <div className="space-y-2">
-                    <Label htmlFor="plaid_client">Plaid Client ID</Label>
-                    <Input
-                      id="plaid_client"
-                      type="password"
-                      placeholder="Enter Plaid Client ID"
-                      value={apiKeys.plaid_client_id}
-                      onChange={(e) => setApiKeys(prev => ({ ...prev, plaid_client_id: e.target.value }))}
-                    />
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="plaid_secret">Plaid Secret</Label>
-                    <Input
-                      id="plaid_secret"
-                      type="password"
-                      placeholder="Enter Plaid Secret"
-                      value={apiKeys.plaid_secret}
-                      onChange={(e) => setApiKeys(prev => ({ ...prev, plaid_secret: e.target.value }))}
-                    />
-                  </div>
-                  
-                  <div className="space-y-2">
                     <Label htmlFor="openai_key">OpenAI API Key</Label>
                     <Input
                       id="openai_key"
@@ -402,5 +378,7 @@ export default function SettingsPage() {
     </motion.div>
   )
 }
+
+
 
 

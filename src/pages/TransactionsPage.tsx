@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { 
   Search, 
@@ -11,12 +11,17 @@ import {
   Building2,
   Pencil,
   SplitSquareVertical,
+  Trash2,
+  AlertTriangle,
+  FolderKanban,
+  X,
 } from 'lucide-react'
 import { useFinancialStore } from '@/stores/financialStore'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -30,17 +35,98 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu'
 import { formatCurrency, formatDate } from '@/lib/utils'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { useToast } from '@/components/ui/use-toast'
+import { useAuthStore } from '@/stores/authStore'
 import type { Transaction } from '@/types/database'
 
 export default function TransactionsPage() {
-  const { transactions, accounts, categories, businesses, isLoadingTransactions, updateTransaction } = useFinancialStore()
+  const { 
+    transactions, 
+    accounts, 
+    categories, 
+    businesses, 
+    projects, 
+    isLoadingTransactions, 
+    updateTransaction, 
+    deleteTransaction, 
+    deleteAllTransactions,
+    fetchProjects 
+  } = useFinancialStore()
+  const { user } = useAuthStore()
+  const { toast } = useToast()
   
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedAccount, setSelectedAccount] = useState<string>('all')
   const [selectedCategory, setSelectedCategory] = useState<string>('all')
+  const [selectedProject, setSelectedProject] = useState<string>('all')
   const [transactionType, setTransactionType] = useState<'all' | 'income' | 'expense'>('all')
+  const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+
+  useEffect(() => {
+    if (user) {
+      fetchProjects(user.id)
+    }
+  }, [user, fetchProjects])
+
+  const handleDeleteTransaction = async (id: string, name: string) => {
+    const success = await deleteTransaction(id)
+    if (success) {
+      toast({
+        title: 'Transaction deleted',
+        description: `"${name}" has been removed.`,
+      })
+    } else {
+      toast({
+        title: 'Error',
+        description: 'Failed to delete transaction.',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  const handleDeleteAllTransactions = async () => {
+    if (!user?.id) return
+    setIsDeleting(true)
+    const success = await deleteAllTransactions(user.id)
+    setIsDeleting(false)
+    setShowDeleteAllDialog(false)
+    
+    if (success) {
+      toast({
+        title: 'All transactions deleted',
+        description: 'Your transaction history has been cleared.',
+      })
+    } else {
+      toast({
+        title: 'Error',
+        description: 'Failed to delete transactions.',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  const handleAssignProject = async (transactionId: string, projectId: string | null) => {
+    await updateTransaction(transactionId, { project_id: projectId })
+    const projectName = projectId ? projects.find(p => p.id === projectId)?.name : 'None'
+    toast({
+      title: 'Project updated',
+      description: `Transaction assigned to project: ${projectName || 'None'}`,
+    })
+  }
 
   const filteredTransactions = useMemo(() => {
     return transactions.filter(t => {
@@ -62,6 +148,12 @@ export default function TransactionsPage() {
       if (selectedCategory !== 'all' && t.category_id !== selectedCategory) {
         return false
       }
+
+      // Project filter
+      if (selectedProject !== 'all') {
+        if (selectedProject === '_unassigned' && t.project_id) return false
+        if (selectedProject !== '_unassigned' && t.project_id !== selectedProject) return false
+      }
       
       // Type filter
       if (transactionType === 'income' && t.amount <= 0) return false
@@ -69,7 +161,7 @@ export default function TransactionsPage() {
       
       return true
     })
-  }, [transactions, searchQuery, selectedAccount, selectedCategory, transactionType])
+  }, [transactions, searchQuery, selectedAccount, selectedCategory, selectedProject, transactionType])
 
   const totalIncome = filteredTransactions
     .filter(t => t.amount > 0)
@@ -116,10 +208,22 @@ export default function TransactionsPage() {
             {filteredTransactions.length} transaction{filteredTransactions.length !== 1 ? 's' : ''}
           </p>
         </div>
-        <Button variant="outline">
-          <Download className="w-4 h-4 mr-2" />
-          Export
-        </Button>
+        <div className="flex items-center gap-2">
+          {transactions.length > 0 && (
+            <Button 
+              variant="outline" 
+              className="text-destructive hover:text-destructive hover:bg-destructive/10"
+              onClick={() => setShowDeleteAllDialog(true)}
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              Delete All
+            </Button>
+          )}
+          <Button variant="outline">
+            <Download className="w-4 h-4 mr-2" />
+            Export
+          </Button>
+        </div>
       </div>
 
       {/* Summary Cards */}
@@ -210,6 +314,27 @@ export default function TransactionsPage() {
                   ))}
                 </SelectContent>
               </Select>
+
+              <Select value={selectedProject} onValueChange={setSelectedProject}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="All Projects" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Projects</SelectItem>
+                  <SelectItem value="_unassigned">Unassigned</SelectItem>
+                  {projects.filter(p => p.is_active).map(project => (
+                    <SelectItem key={project.id} value={project.id}>
+                      <div className="flex items-center gap-2">
+                        <div 
+                          className="w-3 h-3 rounded-full" 
+                          style={{ backgroundColor: project.color }}
+                        />
+                        {project.name}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               
               <Select 
                 value={transactionType} 
@@ -254,6 +379,7 @@ export default function TransactionsPage() {
                 {filteredTransactions.map((transaction) => {
                   const categoryName = getCategoryName(transaction.category_id)
                   const business = businesses.find(b => b.id === transaction.business_id)
+                  const project = projects.find(p => p.id === transaction.project_id)
                   
                   return (
                     <div 
@@ -302,13 +428,27 @@ export default function TransactionsPage() {
                       
                       <div className="flex items-center gap-4">
                         <div className="flex items-center gap-2">
+                          {project && (
+                            <Badge 
+                              variant="secondary" 
+                              className="text-xs"
+                              style={{ 
+                                backgroundColor: `${project.color}20`,
+                                borderColor: `${project.color}50`,
+                                color: project.color
+                              }}
+                            >
+                              <FolderKanban className="w-3 h-3 mr-1" />
+                              {project.name}
+                            </Badge>
+                          )}
                           {business && (
                             <Badge variant="secondary" className="text-xs">
                               <Building2 className="w-3 h-3 mr-1" />
                               {business.name}
                             </Badge>
                           )}
-                          {transaction.is_business_expense && (
+                          {transaction.is_business_expense && !business && (
                             <Badge variant="outline" className="text-xs">Business</Badge>
                           )}
                         </div>
@@ -334,6 +474,34 @@ export default function TransactionsPage() {
                               <Tag className="w-4 h-4 mr-2" />
                               Change Category
                             </DropdownMenuItem>
+                            <DropdownMenuSub>
+                              <DropdownMenuSubTrigger>
+                                <FolderKanban className="w-4 h-4 mr-2" />
+                                Assign to Project
+                              </DropdownMenuSubTrigger>
+                              <DropdownMenuSubContent>
+                                <DropdownMenuItem onClick={() => handleAssignProject(transaction.id, null)}>
+                                  <X className="w-4 h-4 mr-2" />
+                                  No Project
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                {projects.filter(p => p.is_active).map(p => (
+                                  <DropdownMenuItem 
+                                    key={p.id}
+                                    onClick={() => handleAssignProject(transaction.id, p.id)}
+                                  >
+                                    <div 
+                                      className="w-3 h-3 rounded-full mr-2" 
+                                      style={{ backgroundColor: p.color }}
+                                    />
+                                    {p.name}
+                                    {transaction.project_id === p.id && (
+                                      <span className="ml-auto text-xs text-primary">✓</span>
+                                    )}
+                                  </DropdownMenuItem>
+                                ))}
+                              </DropdownMenuSubContent>
+                            </DropdownMenuSub>
                             <DropdownMenuItem>
                               <Building2 className="w-4 h-4 mr-2" />
                               Assign to Business
@@ -347,6 +515,14 @@ export default function TransactionsPage() {
                               <SplitSquareVertical className="w-4 h-4 mr-2" />
                               Split Transaction
                             </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem 
+                              className="text-destructive focus:text-destructive"
+                              onClick={() => handleDeleteTransaction(transaction.id, transaction.merchant_name || transaction.name)}
+                            >
+                              <Trash2 className="w-4 h-4 mr-2" />
+                              Delete Transaction
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>
@@ -358,8 +534,52 @@ export default function TransactionsPage() {
           </CardContent>
         </Card>
       </motion.div>
+
+      {/* Delete All Confirmation Dialog */}
+      <Dialog open={showDeleteAllDialog} onOpenChange={setShowDeleteAllDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="w-5 h-5" />
+              Delete All Transactions
+            </DialogTitle>
+            <DialogDescription className="pt-2">
+              This will permanently delete <strong>{transactions.length} transactions</strong>. 
+              This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button 
+              variant="outline" 
+              onClick={() => setShowDeleteAllDialog(false)}
+              disabled={isDeleting}
+            >
+              Cancel
+            </Button>
+            <Button 
+              variant="destructive" 
+              onClick={handleDeleteAllTransactions}
+              disabled={isDeleting}
+            >
+              {isDeleting ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                  Deleting...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Delete All
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </motion.div>
   )
 }
+
+
 
 

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { 
   Plus, 
@@ -7,18 +7,17 @@ import {
   Wallet, 
   PiggyBank,
   TrendingUp,
-  RefreshCw,
   MoreVertical,
   Eye,
   EyeOff,
   Pencil,
   Trash2,
   Loader2,
+  Upload,
 } from 'lucide-react'
-import { usePlaidLink } from 'react-plaid-link'
+import { Link } from 'react-router-dom'
 import { useFinancialStore } from '@/stores/financialStore'
 import { useAuthStore } from '@/stores/authStore'
-import { supabase } from '@/lib/supabase'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -69,269 +68,19 @@ const accountTypeColors = {
 
 export default function AccountsPage() {
   const { user } = useAuthStore()
-  const { accounts, businesses, addAccount, updateAccount, deleteAccount, isLoadingAccounts, fetchAccounts } = useFinancialStore()
+  const { accounts, businesses, addAccount, updateAccount, deleteAccount, isLoadingAccounts } = useFinancialStore()
   const { toast } = useToast()
   
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [editingAccount, setEditingAccount] = useState<Account | null>(null)
-  const [linkToken, setLinkToken] = useState<string | null>(null)
-  const [isConnecting, setIsConnecting] = useState(false)
-  const [isSyncing, setIsSyncing] = useState(false)
+  const [accountToDelete, setAccountToDelete] = useState<Account | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
   const [formData, setFormData] = useState({
     name: '',
     type: 'checking' as Account['type'],
     current_balance: '',
     institution_name: '',
     business_id: '',
-  })
-
-  // Sync transactions from all connected banks
-  const handleSyncTransactions = useCallback(async () => {
-    if (!user) return
-    
-    console.log('🔄 Starting transaction sync...')
-    setIsSyncing(true)
-    
-    try {
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-      if (!supabaseUrl) throw new Error('Supabase URL not configured')
-
-      // Try to get access token
-      let accessToken = localStorage.getItem('plaid_pending_access_token')
-      
-      if (!accessToken) {
-        console.log('Getting session...')
-        const { data: { session } } = await supabase.auth.getSession()
-        accessToken = session?.access_token || null
-      }
-      
-      if (!accessToken) {
-        console.log('Trying refresh...')
-        const { data: { session } } = await supabase.auth.refreshSession()
-        accessToken = session?.access_token || null
-      }
-      
-      if (!accessToken) {
-        throw new Error('No session - please refresh the page')
-      }
-
-      console.log('Making sync API call...')
-      const response = await fetch(
-        `${supabaseUrl}/functions/v1/plaid-sync-transactions`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      )
-
-      console.log('Response status:', response.status)
-      const data = await response.json()
-      console.log('Response data:', data)
-      
-      if (data.success) {
-        toast({
-          title: '✅ Sync Complete!',
-          description: `Synced ${data.transactions_synced} transactions from ${data.items_synced} bank(s).`,
-        })
-        // Refresh accounts to get updated balances
-        fetchAccounts(user.id)
-      } else {
-        throw new Error(data.error || 'Sync failed')
-      }
-    } catch (error) {
-      console.error('Error syncing transactions:', error)
-      toast({
-        title: 'Sync Failed',
-        description: error instanceof Error ? error.message : 'Failed to sync transactions',
-        variant: 'destructive',
-      })
-    } finally {
-      setIsSyncing(false)
-    }
-  }, [user, toast, fetchAccounts])
-
-  // Fetch Plaid link token
-  const fetchLinkToken = useCallback(async () => {
-    if (!user) return
-    
-    try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) return
-
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/plaid-create-link-token`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${session.access_token}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      )
-
-      const data = await response.json()
-      if (data.link_token) {
-        setLinkToken(data.link_token)
-      } else if (data.error) {
-        console.error('Failed to get link token:', data.error)
-      }
-    } catch (error) {
-      console.error('Error fetching link token:', error)
-    }
-  }, [user])
-
-  useEffect(() => {
-    fetchLinkToken()
-  }, [fetchLinkToken])
-
-  // Store access token before opening Plaid (survives OAuth redirects)
-  const storeAccessToken = useCallback(async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (session?.access_token) {
-        localStorage.setItem('plaid_pending_access_token', session.access_token)
-        console.log('🔐 Stored access token for Plaid')
-      }
-    } catch (e) {
-      console.error('Failed to store access token:', e)
-    }
-  }, [])
-
-  // Handle successful Plaid Link connection
-  const onPlaidSuccess = useCallback(async (public_token: string, metadata: any) => {
-    console.log('🏦 Plaid Link success! Exchanging token...')
-    console.log('Public token:', public_token)
-    
-    setIsConnecting(true)
-    
-    try {
-      // Get the Supabase URL
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-      console.log('Supabase URL:', supabaseUrl)
-      
-      if (!supabaseUrl) {
-        throw new Error('Supabase URL not configured')
-      }
-
-      // Try multiple methods to get the access token
-      console.log('Getting access token...')
-      let accessToken = null
-      
-      // Method 1: Try stored token from before Plaid opened (survives OAuth)
-      accessToken = localStorage.getItem('plaid_pending_access_token')
-      if (accessToken) {
-        console.log('✅ Found stored access token')
-      }
-      
-      // Method 2: Try current session
-      if (!accessToken) {
-        console.log('Trying getSession...')
-        try {
-          const { data: { session } } = await supabase.auth.getSession()
-          accessToken = session?.access_token
-          if (accessToken) console.log('✅ Got token from getSession')
-        } catch (e) {
-          console.error('getSession failed:', e)
-        }
-      }
-      
-      // Method 3: Try refreshing session
-      if (!accessToken) {
-        console.log('Trying to refresh session...')
-        try {
-          const { data: { session } } = await supabase.auth.refreshSession()
-          accessToken = session?.access_token
-          if (accessToken) console.log('✅ Got token from refreshSession')
-        } catch (e) {
-          console.error('refreshSession failed:', e)
-        }
-      }
-      
-      if (!accessToken) {
-        console.error('No access token available')
-        toast({
-          title: 'Session Expired',
-          description: 'Please refresh the page and try again.',
-          variant: 'destructive',
-        })
-        throw new Error('Session expired - please refresh the page and log in again')
-      }
-
-      console.log('Making API call to plaid-exchange-token...')
-      
-      const response = await fetch(
-        `${supabaseUrl}/functions/v1/plaid-exchange-token`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ public_token, metadata }),
-        }
-      )
-
-      console.log('Response status:', response.status)
-      
-      if (!response.ok) {
-        const errorText = await response.text()
-        console.error('API error:', errorText)
-        throw new Error(`API error: ${response.status}`)
-      }
-      
-      const data = await response.json()
-      console.log('Response data:', JSON.stringify(data))
-      
-      if (data.success) {
-        // Clear stored token
-        localStorage.removeItem('plaid_pending_access_token')
-        
-        toast({
-          title: '🎉 Bank Connected!',
-          description: `Successfully connected ${data.institution || 'your bank'}. ${data.accounts?.length || 0} account(s) added.`,
-        })
-        // Refresh accounts list
-        if (user) fetchAccounts(user.id)
-        // Get a fresh link token for the next connection
-        fetchLinkToken()
-      } else {
-        throw new Error(data.error || 'Failed to connect bank')
-      }
-    } catch (error) {
-      console.error('Error exchanging token:', error)
-      toast({
-        title: 'Connection Failed',
-        description: error instanceof Error ? error.message : 'Failed to connect bank account',
-        variant: 'destructive',
-      })
-    } finally {
-      setIsConnecting(false)
-    }
-  }, [toast, fetchAccounts, fetchLinkToken, user])
-
-  // Plaid Link configuration
-  const { open: openPlaidLink, ready: plaidReady } = usePlaidLink({
-    token: linkToken,
-    onSuccess: onPlaidSuccess,
-    onExit: (err, metadata) => {
-      console.log('🏦 Plaid Link exited')
-      console.log('Exit status:', metadata?.status)
-      console.log('Link session ID:', metadata?.link_session_id)
-      if (err) {
-        console.error('Plaid Link exit error:', err)
-        toast({
-          title: 'Connection Cancelled',
-          description: err.display_message || err.error_message || 'Bank connection was cancelled',
-          variant: 'destructive',
-        })
-      }
-    },
-    onEvent: (eventName, metadata) => {
-      console.log('🏦 Plaid event:', eventName, metadata)
-    },
   })
 
   const handleAddAccount = async () => {
@@ -406,17 +155,9 @@ export default function AccountsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="font-display text-3xl font-bold">Accounts</h1>
-          <p className="text-muted-foreground">Manage your connected accounts</p>
+          <p className="text-muted-foreground">Manage your bank accounts and balances</p>
         </div>
         <div className="flex gap-3">
-          <Button 
-            variant="outline" 
-            onClick={handleSyncTransactions}
-            disabled={isSyncing}
-          >
-            <RefreshCw className={`w-4 h-4 mr-2 ${isSyncing ? 'animate-spin' : ''}`} />
-            {isSyncing ? 'Syncing...' : 'Sync All'}
-          </Button>
           <Button onClick={() => setShowAddDialog(true)}>
             <Plus className="w-4 h-4 mr-2" />
             Add Account
@@ -479,39 +220,25 @@ export default function AccountsPage() {
         </motion.div>
       </div>
 
-      {/* Plaid Integration Card */}
+      {/* Import Card */}
       <motion.div variants={itemVariants}>
         <Card className="bg-gradient-to-r from-emerald-500/10 to-cyan-500/10 border-primary/20">
           <CardContent className="py-6">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="font-display text-lg font-semibold mb-1">
-                  Connect Your Bank Accounts
+                  Import Bank Transactions
                 </h3>
                 <p className="text-sm text-muted-foreground">
-                  Securely connect your bank accounts for automatic transaction syncing via Plaid.
+                  Import transactions from your bank's CSV or Excel exports.
                 </p>
               </div>
-              <Button 
-                className="glow-sm"
-                onClick={async () => {
-                  await storeAccessToken()
-                  openPlaidLink()
-                }}
-                disabled={!plaidReady || !linkToken || isConnecting}
-              >
-                {isConnecting ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Connecting...
-                  </>
-                ) : (
-                  <>
-                    <Building2 className="w-4 h-4 mr-2" />
-                    Connect Bank
-                  </>
-                )}
-              </Button>
+              <Link to="/import">
+                <Button className="glow-sm">
+                  <Upload className="w-4 h-4 mr-2" />
+                  Import Transactions
+                </Button>
+              </Link>
             </div>
           </CardContent>
         </Card>
@@ -606,10 +333,6 @@ export default function AccountsPage() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem>
-                              <RefreshCw className="w-4 h-4 mr-2" />
-                              Sync Now
-                            </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => setEditingAccount(account)}>
                               <Pencil className="w-4 h-4 mr-2" />
                               Edit
@@ -631,22 +354,9 @@ export default function AccountsPage() {
                             </DropdownMenuItem>
                             <DropdownMenuItem 
                               className="text-destructive"
-                              onClick={async () => {
-                                if (confirm(`Are you sure you want to remove "${account.name}"? This action cannot be undone.`)) {
-                                  const success = await deleteAccount(account.id)
-                                  if (success) {
-                                    toast({
-                                      title: 'Account removed',
-                                      description: `${account.name} has been removed.`,
-                                    })
-                                  } else {
-                                    toast({
-                                      title: 'Error',
-                                      description: 'Failed to remove account. Please try again.',
-                                      variant: 'destructive',
-                                    })
-                                  }
-                                }
+                              onSelect={(e) => {
+                                e.preventDefault()
+                                setAccountToDelete(account)
                               }}
                             >
                               <Trash2 className="w-4 h-4 mr-2" />
@@ -760,6 +470,69 @@ export default function AccountsPage() {
             </Button>
             <Button onClick={handleAddAccount} disabled={!formData.name}>
               Add Account
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!accountToDelete} onOpenChange={(open) => !open && setAccountToDelete(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove Account</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to remove "{accountToDelete?.name}"? This action cannot be undone and will also remove all associated transactions.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => setAccountToDelete(null)}
+              disabled={isDeleting}
+            >
+              Cancel
+            </Button>
+            <Button 
+              variant="destructive" 
+              disabled={isDeleting}
+              onClick={async () => {
+                if (!accountToDelete) return
+                setIsDeleting(true)
+                try {
+                  const success = await deleteAccount(accountToDelete.id)
+                  if (success) {
+                    toast({
+                      title: 'Account removed',
+                      description: `${accountToDelete.name} has been removed.`,
+                    })
+                    setAccountToDelete(null)
+                  } else {
+                    toast({
+                      title: 'Error',
+                      description: 'Failed to remove account. Please try again.',
+                      variant: 'destructive',
+                    })
+                  }
+                } catch (error) {
+                  console.error('Error deleting account:', error)
+                  toast({
+                    title: 'Error',
+                    description: 'Failed to remove account. Please try again.',
+                    variant: 'destructive',
+                  })
+                } finally {
+                  setIsDeleting(false)
+                }
+              }}
+            >
+              {isDeleting ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Removing...
+                </>
+              ) : (
+                'Remove Account'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

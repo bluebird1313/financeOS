@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { 
   FileBarChart, 
@@ -8,11 +8,16 @@ import {
   BarChart3,
   TrendingUp,
   FileText,
+  FileSpreadsheet,
+  FolderKanban,
 } from 'lucide-react'
 import { useFinancialStore } from '@/stores/financialStore'
+import { useAuthStore } from '@/stores/authStore'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import {
   Select,
   SelectContent,
@@ -20,8 +25,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatCurrency } from '@/lib/utils'
+import { useToast } from '@/components/ui/use-toast'
+import { exportTransactionsToExcel, exportTransactionsToCSV } from '@/lib/exporters/excelExporter'
 import {
   PieChart as RePieChart,
   Pie,
@@ -39,9 +54,24 @@ import {
 const COLORS = ['#10b981', '#06b6d4', '#8b5cf6', '#f59e0b', '#ef4444', '#ec4899', '#6366f1', '#84cc16']
 
 export default function ReportsPage() {
-  const { transactions, accounts, businesses, categories } = useFinancialStore()
+  const { transactions, accounts, businesses, categories, projects, fetchProjects } = useFinancialStore()
+  const { user } = useAuthStore()
+  const { toast } = useToast()
   const [timeRange, setTimeRange] = useState<'month' | 'quarter' | 'year'>('month')
   const [selectedBusiness, setSelectedBusiness] = useState<string>('all')
+  const [showExportDialog, setShowExportDialog] = useState(false)
+  const [exportOptions, setExportOptions] = useState({
+    format: 'excel' as 'excel' | 'csv',
+    includeAllProjects: true,
+    selectedProject: 'all',
+    groupBy: 'none' as 'none' | 'project' | 'account',
+  })
+
+  useEffect(() => {
+    if (user) {
+      fetchProjects(user.id)
+    }
+  }, [user, fetchProjects])
 
   // Filter transactions based on time range
   const filteredTransactions = useMemo(() => {
@@ -154,6 +184,65 @@ export default function ReportsPage() {
     URL.revokeObjectURL(url)
   }
 
+  const handleExport = () => {
+    // Prepare filters
+    const now = new Date()
+    let startDate: string | undefined
+    
+    switch (timeRange) {
+      case 'month':
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
+        break
+      case 'quarter':
+        const quarter = Math.floor(now.getMonth() / 3)
+        startDate = new Date(now.getFullYear(), quarter * 3, 1).toISOString().split('T')[0]
+        break
+      case 'year':
+        startDate = new Date(now.getFullYear(), 0, 1).toISOString().split('T')[0]
+        break
+    }
+
+    const filters = {
+      startDate,
+      projectIds: !exportOptions.includeAllProjects && exportOptions.selectedProject !== 'all' 
+        ? [exportOptions.selectedProject] 
+        : undefined,
+      businessIds: selectedBusiness !== 'all' ? [selectedBusiness] : undefined,
+    }
+
+    const options = {
+      transactions,
+      accounts,
+      projects,
+      businesses,
+      filters,
+      groupBy: exportOptions.groupBy,
+      includeUnassigned: exportOptions.includeAllProjects || exportOptions.selectedProject === 'all',
+    }
+
+    let result
+    if (exportOptions.format === 'excel') {
+      result = exportTransactionsToExcel(options)
+    } else {
+      result = exportTransactionsToCSV(options)
+    }
+
+    if (result.success) {
+      toast({
+        title: 'Export successful',
+        description: `Downloaded ${result.fileName}`,
+      })
+    } else {
+      toast({
+        title: 'Export failed',
+        description: result.error || 'Unknown error',
+        variant: 'destructive',
+      })
+    }
+
+    setShowExportDialog(false)
+  }
+
   return (
     <motion.div
       variants={containerVariants}
@@ -197,6 +286,10 @@ export default function ReportsPage() {
           <Button variant="outline" onClick={handleExportCSV}>
             <Download className="w-4 h-4 mr-2" />
             Export CSV
+          </Button>
+          <Button onClick={() => setShowExportDialog(true)}>
+            <FileSpreadsheet className="w-4 h-4 mr-2" />
+            Export Excel
           </Button>
         </div>
       </div>
@@ -453,8 +546,132 @@ export default function ReportsPage() {
           </CardContent>
         </Card>
       </motion.div>
+
+      {/* Export Dialog */}
+      <Dialog open={showExportDialog} onOpenChange={setShowExportDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Export Transactions</DialogTitle>
+            <DialogDescription>
+              Export your transactions to Excel with itemized debits and credits grouped by project or account.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Export Format</Label>
+              <Select 
+                value={exportOptions.format} 
+                onValueChange={(v) => setExportOptions(prev => ({ ...prev, format: v as 'excel' | 'csv' }))}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="excel">
+                    <div className="flex items-center gap-2">
+                      <FileSpreadsheet className="w-4 h-4" />
+                      Excel (.xlsx) with summaries
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="csv">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-4 h-4" />
+                      CSV (simple)
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {exportOptions.format === 'excel' && (
+              <div className="space-y-2">
+                <Label>Group Summary By</Label>
+                <Select 
+                  value={exportOptions.groupBy} 
+                  onValueChange={(v) => setExportOptions(prev => ({ ...prev, groupBy: v as 'none' | 'project' | 'account' }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Include all summaries</SelectItem>
+                    <SelectItem value="project">Project summary only</SelectItem>
+                    <SelectItem value="account">Account summary only</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Label>Filter by Project</Label>
+              <div className="flex items-center gap-2 mb-2">
+                <Switch
+                  id="all-projects"
+                  checked={exportOptions.includeAllProjects}
+                  onCheckedChange={(checked) => setExportOptions(prev => ({ 
+                    ...prev, 
+                    includeAllProjects: checked,
+                    selectedProject: 'all'
+                  }))}
+                />
+                <Label htmlFor="all-projects" className="font-normal">Include all projects</Label>
+              </div>
+              
+              {!exportOptions.includeAllProjects && (
+                <Select 
+                  value={exportOptions.selectedProject} 
+                  onValueChange={(v) => setExportOptions(prev => ({ ...prev, selectedProject: v }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select project" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {projects.filter(p => p.is_active).map(project => (
+                      <SelectItem key={project.id} value={project.id}>
+                        <div className="flex items-center gap-2">
+                          <div 
+                            className="w-3 h-3 rounded-full" 
+                            style={{ backgroundColor: project.color }}
+                          />
+                          {project.name}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+
+            <div className="p-4 bg-muted/50 rounded-lg text-sm text-muted-foreground">
+              <p className="font-medium text-foreground mb-2">Export includes:</p>
+              <ul className="list-disc list-inside space-y-1">
+                <li>Transactions sheet with separate Debit/Credit columns</li>
+                {exportOptions.format === 'excel' && (
+                  <>
+                    <li>Summary by Project (totals per project)</li>
+                    <li>Summary by Account (totals per account with linked business)</li>
+                  </>
+                )}
+              </ul>
+            </div>
+          </div>
+          
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowExportDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleExport}>
+              <Download className="w-4 h-4 mr-2" />
+              Export
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </motion.div>
   )
 }
+
+
 
 

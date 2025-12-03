@@ -86,7 +86,7 @@ const FIELD_OPTIONS = [
 
 export default function ImportWizard({ open, onOpenChange, onComplete }: ImportWizardProps) {
   const { user } = useAuthStore()
-  const { accounts, businesses, categories, addTransaction, fetchTransactions } = useFinancialStore()
+  const { accounts, businesses, categories, projects, importProfiles, addTransaction, fetchTransactions, fetchImportProfiles, fetchProjects } = useFinancialStore()
   const { toast } = useToast()
 
   // Wizard state
@@ -111,13 +111,63 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
   // Import settings
   const [selectedAccountId, setSelectedAccountId] = useState<string>('')
   const [selectedEntityId, setSelectedEntityId] = useState<string>('')
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('')
   const [saveAsProfile, setSaveAsProfile] = useState(false)
   const [profileName, setProfileName] = useState('')
+  const [selectedProfileId, setSelectedProfileId] = useState<string>('')
 
   // AI categorization
   const [enableAICategorization, setEnableAICategorization] = useState(true)
   const [isCategorizingAI, setIsCategorizingAI] = useState(false)
   const [isAIMapping, setIsAIMapping] = useState(false)
+
+  // Load profiles and projects when dialog opens
+  const loadInitialData = useCallback(() => {
+    if (user) {
+      fetchImportProfiles(user.id)
+      fetchProjects(user.id)
+    }
+  }, [user, fetchImportProfiles, fetchProjects])
+
+  // Get the business linked to the selected account
+  const selectedAccountBusiness = useMemo(() => {
+    const account = accounts.find(a => a.id === selectedAccountId)
+    if (account?.business_id) {
+      return businesses.find(b => b.id === account.business_id)
+    }
+    return null
+  }, [selectedAccountId, accounts, businesses])
+
+  // Load profile settings when a profile is selected
+  const handleProfileSelect = useCallback((profileId: string) => {
+    setSelectedProfileId(profileId)
+    const profile = importProfiles.find(p => p.id === profileId)
+    if (profile) {
+      // Apply profile settings
+      if (profile.column_mappings) {
+        // Convert column_mappings from {field: header} to {header: field}
+        const mappings: Record<string, string> = {}
+        for (const [field, header] of Object.entries(profile.column_mappings)) {
+          if (header) {
+            mappings[header as string] = field
+          }
+        }
+        setColumnMappings(mappings)
+      }
+      setHasHeaderRow(profile.has_header_row)
+      setAmountIsNegativeForDebits(profile.amount_is_negative_for_debits)
+      if (profile.default_account_id) {
+        setSelectedAccountId(profile.default_account_id)
+      }
+      if (profile.default_entity_id) {
+        setSelectedEntityId(profile.default_entity_id)
+      }
+      toast({
+        title: 'Profile loaded',
+        description: `Applied settings from "${profile.name}"`,
+      })
+    }
+  }, [importProfiles, toast])
 
   // Import results
   const [importResults, setImportResults] = useState({
@@ -153,12 +203,15 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
     setAmountIsNegativeForDebits(true)
     setSelectedAccountId('')
     setSelectedEntityId('')
+    setSelectedProjectId('')
     setSaveAsProfile(false)
     setProfileName('')
+    setSelectedProfileId('')
     setStagedTransactions([])
     setVisibleCount(50)
     setImportResults({ total: 0, imported: 0, duplicates: 0, errors: 0 })
-  }, [])
+    loadInitialData()
+  }, [loadInitialData])
 
   // Handle file drop/select
   const handleFileSelect = useCallback(async (selectedFile: File) => {
@@ -374,6 +427,9 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
           const t = staged.transaction
           // Fix: suggestCategory returns { categoryId, confidence }, not { id, name }
           const categoryId = (staged.category as any)?.categoryId || (staged.category as any)?.id || null
+          // Get the business_id from the account if not explicitly set
+          const account = accounts.find(a => a.id === selectedAccountId)
+          const businessId = selectedEntityId || account?.business_id || null
           return {
             user_id: user.id,
             account_id: selectedAccountId,
@@ -385,8 +441,9 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
             check_number: t.checkNumber || null,
             is_manual: true,
             notes: t.memo || null,
-            business_id: selectedEntityId || null,
-            plaid_transaction_id: t.referenceId || null,
+            business_id: businessId,
+            project_id: selectedProjectId || null,
+            external_reference_id: t.referenceId || null,
           }
         })
         
@@ -477,8 +534,8 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
       onComplete(imported)
     }
   }, [
-    user, selectedAccountId, selectedEntityId, stagedTransactions, 
-    saveAsProfile, profileName, file, fileType, columnMappings,
+    user, selectedAccountId, selectedEntityId, selectedProjectId, stagedTransactions, 
+    saveAsProfile, profileName, file, fileType, columnMappings, accounts,
     hasHeaderRow, amountIsNegativeForDebits, fetchTransactions, toast, onComplete
   ])
 
@@ -903,6 +960,25 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
                     <CardTitle className="text-lg">Import Settings</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
+                    {/* Saved Profile Selector */}
+                    {importProfiles.length > 0 && (
+                      <div className="space-y-2 pb-4 border-b">
+                        <Label>Load Saved Profile</Label>
+                        <Select value={selectedProfileId} onValueChange={handleProfileSelect}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select a saved profile..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {importProfiles.map(profile => (
+                              <SelectItem key={profile.id} value={profile.id}>
+                                {profile.name} ({profile.file_type.toUpperCase()})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                    
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label>Target Account *</Label>
@@ -911,26 +987,40 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
                             <SelectValue placeholder="Select account..." />
                           </SelectTrigger>
                           <SelectContent>
-                            {accounts.map(acc => (
-                              <SelectItem key={acc.id} value={acc.id}>
-                                {acc.name} ({acc.institution_name || 'Manual'})
-                              </SelectItem>
-                            ))}
+                            {accounts.map(acc => {
+                              const accBusiness = businesses.find(b => b.id === acc.business_id)
+                              return (
+                                <SelectItem key={acc.id} value={acc.id}>
+                                  {acc.name} {accBusiness && `(${accBusiness.name})`}
+                                </SelectItem>
+                              )
+                            })}
                           </SelectContent>
                         </Select>
+                        {selectedAccountBusiness && (
+                          <p className="text-xs text-muted-foreground">
+                            Linked to: <span className="text-primary">{selectedAccountBusiness.name}</span>
+                          </p>
+                        )}
                       </div>
                       
                       <div className="space-y-2">
-                        <Label>Entity (Optional)</Label>
-                        <Select value={selectedEntityId || '_personal'} onValueChange={(v) => setSelectedEntityId(v === '_personal' ? '' : v)}>
+                        <Label>Project (Optional)</Label>
+                        <Select value={selectedProjectId || '_none'} onValueChange={(v) => setSelectedProjectId(v === '_none' ? '' : v)}>
                           <SelectTrigger>
-                            <SelectValue placeholder="Personal" />
+                            <SelectValue placeholder="No project" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="_personal">Personal</SelectItem>
-                            {businesses.map(biz => (
-                              <SelectItem key={biz.id} value={biz.id}>
-                                {biz.name}
+                            <SelectItem value="_none">No project</SelectItem>
+                            {projects.filter(p => p.is_active).map(project => (
+                              <SelectItem key={project.id} value={project.id}>
+                                <div className="flex items-center gap-2">
+                                  <div 
+                                    className="w-3 h-3 rounded-full" 
+                                    style={{ backgroundColor: project.color }}
+                                  />
+                                  {project.name}
+                                </div>
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -938,7 +1028,7 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
                       </div>
                     </div>
                     
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-4 flex-wrap">
                       <div className="flex items-center gap-2">
                         <Switch
                           id="ai-categorize"

@@ -8,7 +8,9 @@ import type {
   RecurringTransaction, 
   Business, 
   Category,
-  Alert 
+  Alert,
+  Project,
+  ImportProfile
 } from '@/types/database'
 
 interface FinancialState {
@@ -21,16 +23,20 @@ interface FinancialState {
   businesses: Business[]
   categories: Category[]
   alerts: Alert[]
+  projects: Project[]
+  importProfiles: ImportProfile[]
   
   // Loading states
   isLoadingAccounts: boolean
   isLoadingTransactions: boolean
   isLoadingChecks: boolean
   isLoadingBills: boolean
+  isLoadingProjects: boolean
   
   // Filters
   selectedAccountId: string | null
   selectedBusinessId: string | null
+  selectedProjectId: string | null
   dateRange: { start: Date; end: Date }
   
   // Actions
@@ -42,6 +48,8 @@ interface FinancialState {
   fetchBusinesses: (userId: string) => Promise<void>
   fetchCategories: (userId: string) => Promise<void>
   fetchAlerts: (userId: string) => Promise<void>
+  fetchProjects: (userId: string) => Promise<void>
+  fetchImportProfiles: (userId: string) => Promise<void>
   
   // Mutations
   addAccount: (account: Partial<Account>) => Promise<Account | null>
@@ -49,6 +57,8 @@ interface FinancialState {
   deleteAccount: (id: string) => Promise<boolean>
   addTransaction: (transaction: Partial<Transaction>) => Promise<Transaction | null>
   updateTransaction: (id: string, updates: Partial<Transaction>) => Promise<void>
+  deleteTransaction: (id: string) => Promise<boolean>
+  deleteAllTransactions: (userId: string) => Promise<boolean>
   addCheck: (check: Partial<Check>) => Promise<Check | null>
   updateCheck: (id: string, updates: Partial<Check>) => Promise<void>
   matchCheckToTransaction: (checkId: string, transactionId: string) => Promise<void>
@@ -58,9 +68,20 @@ interface FinancialState {
   markAlertRead: (id: string) => Promise<void>
   dismissAlert: (id: string) => Promise<void>
   
+  // Project mutations
+  addProject: (project: Partial<Project>) => Promise<Project | null>
+  updateProject: (id: string, updates: Partial<Project>) => Promise<void>
+  deleteProject: (id: string) => Promise<boolean>
+  
+  // Import Profile mutations
+  addImportProfile: (profile: Partial<ImportProfile>) => Promise<ImportProfile | null>
+  updateImportProfile: (id: string, updates: Partial<ImportProfile>) => Promise<void>
+  deleteImportProfile: (id: string) => Promise<boolean>
+  
   // Filters
   setSelectedAccount: (id: string | null) => void
   setSelectedBusiness: (id: string | null) => void
+  setSelectedProject: (id: string | null) => void
   setDateRange: (start: Date, end: Date) => void
   
   // Computed
@@ -68,6 +89,7 @@ interface FinancialState {
   getUnmatchedChecks: () => Check[]
   getUpcomingBills: () => Bill[]
   getRecentTransactions: (limit?: number) => Transaction[]
+  getTransactionCountByProject: (projectId: string) => number
 }
 
 export const useFinancialStore = create<FinancialState>((set, get) => ({
@@ -80,12 +102,16 @@ export const useFinancialStore = create<FinancialState>((set, get) => ({
   businesses: [],
   categories: [],
   alerts: [],
+  projects: [],
+  importProfiles: [],
   isLoadingAccounts: false,
   isLoadingTransactions: false,
   isLoadingChecks: false,
   isLoadingBills: false,
+  isLoadingProjects: false,
   selectedAccountId: null,
   selectedBusinessId: null,
+  selectedProjectId: null,
   dateRange: {
     start: new Date(new Date().setMonth(new Date().getMonth() - 1)),
     end: new Date(),
@@ -235,6 +261,39 @@ export const useFinancialStore = create<FinancialState>((set, get) => ({
     }
   },
 
+  fetchProjects: async (userId) => {
+    set({ isLoadingProjects: true })
+    try {
+      const { data, error } = await supabase
+        .from('projects')
+        .select('*')
+        .eq('user_id', userId)
+        .order('name', { ascending: true })
+      
+      if (error) throw error
+      set({ projects: data || [] })
+    } catch (error) {
+      console.error('Error fetching projects:', error)
+    } finally {
+      set({ isLoadingProjects: false })
+    }
+  },
+
+  fetchImportProfiles: async (userId) => {
+    try {
+      const { data, error } = await supabase
+        .from('import_profiles')
+        .select('*')
+        .eq('user_id', userId)
+        .order('name', { ascending: true })
+      
+      if (error) throw error
+      set({ importProfiles: data || [] })
+    } catch (error) {
+      console.error('Error fetching import profiles:', error)
+    }
+  },
+
   // Mutations
   addAccount: async (account) => {
     try {
@@ -321,6 +380,40 @@ export const useFinancialStore = create<FinancialState>((set, get) => ({
       }))
     } catch (error) {
       console.error('Error updating transaction:', error)
+    }
+  },
+
+  deleteTransaction: async (id) => {
+    try {
+      const { error } = await supabase
+        .from('transactions')
+        .delete()
+        .eq('id', id)
+      
+      if (error) throw error
+      set(state => ({
+        transactions: state.transactions.filter(t => t.id !== id),
+      }))
+      return true
+    } catch (error) {
+      console.error('Error deleting transaction:', error)
+      return false
+    }
+  },
+
+  deleteAllTransactions: async (userId) => {
+    try {
+      const { error } = await supabase
+        .from('transactions')
+        .delete()
+        .eq('user_id', userId)
+      
+      if (error) throw error
+      set({ transactions: [] })
+      return true
+    } catch (error) {
+      console.error('Error deleting all transactions:', error)
+      return false
     }
   },
 
@@ -469,9 +562,118 @@ export const useFinancialStore = create<FinancialState>((set, get) => ({
     }
   },
 
+  // Project mutations
+  addProject: async (project) => {
+    try {
+      const { data, error } = await supabase
+        .from('projects')
+        .insert(project)
+        .select()
+        .single()
+      
+      if (error) throw error
+      set(state => ({ projects: [...state.projects, data] }))
+      return data
+    } catch (error) {
+      console.error('Error adding project:', error)
+      return null
+    }
+  },
+
+  updateProject: async (id, updates) => {
+    try {
+      const { error } = await supabase
+        .from('projects')
+        .update({ ...updates, updated_at: new Date().toISOString() })
+        .eq('id', id)
+      
+      if (error) throw error
+      set(state => ({
+        projects: state.projects.map(p => 
+          p.id === id ? { ...p, ...updates } : p
+        ),
+      }))
+    } catch (error) {
+      console.error('Error updating project:', error)
+    }
+  },
+
+  deleteProject: async (id) => {
+    try {
+      const { error } = await supabase
+        .from('projects')
+        .delete()
+        .eq('id', id)
+      
+      if (error) throw error
+      set(state => ({
+        projects: state.projects.filter(p => p.id !== id),
+      }))
+      return true
+    } catch (error) {
+      console.error('Error deleting project:', error)
+      return false
+    }
+  },
+
+  // Import Profile mutations
+  addImportProfile: async (profile) => {
+    try {
+      const { data, error } = await supabase
+        .from('import_profiles')
+        .insert(profile)
+        .select()
+        .single()
+      
+      if (error) throw error
+      set(state => ({ importProfiles: [...state.importProfiles, data] }))
+      return data
+    } catch (error) {
+      console.error('Error adding import profile:', error)
+      return null
+    }
+  },
+
+  updateImportProfile: async (id, updates) => {
+    try {
+      const { error } = await supabase
+        .from('import_profiles')
+        .update({ ...updates, updated_at: new Date().toISOString() })
+        .eq('id', id)
+      
+      if (error) throw error
+      set(state => ({
+        importProfiles: state.importProfiles.map(p => 
+          p.id === id ? { ...p, ...updates } : p
+        ),
+      }))
+    } catch (error) {
+      console.error('Error updating import profile:', error)
+    }
+  },
+
+  deleteImportProfile: async (id) => {
+    try {
+      const { error } = await supabase
+        .from('import_profiles')
+        .delete()
+        .eq('id', id)
+      
+      if (error) throw error
+      set(state => ({
+        importProfiles: state.importProfiles.filter(p => p.id !== id),
+      }))
+      return true
+    } catch (error) {
+      console.error('Error deleting import profile:', error)
+      return false
+    }
+  },
+
   // Filters
   setSelectedAccount: (id) => set({ selectedAccountId: id }),
   setSelectedBusiness: (id) => set({ selectedBusinessId: id }),
+  setSelectedProject: (id) => set({ selectedProjectId: id }),
   setDateRange: (start, end) => set({ dateRange: { start, end } }),
 
   // Computed
@@ -504,6 +706,11 @@ export const useFinancialStore = create<FinancialState>((set, get) => ({
   getRecentTransactions: (limit = 10) => {
     const { transactions } = get()
     return transactions.slice(0, limit)
+  },
+
+  getTransactionCountByProject: (projectId: string) => {
+    const { transactions } = get()
+    return transactions.filter(t => t.project_id === projectId).length
   },
 }))
 
