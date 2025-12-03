@@ -393,26 +393,26 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
         console.log('Inserting batch:', transactionsToInsert.length, 'transactions')
         console.log('First transaction:', transactionsToInsert[0])
         
-        console.log('About to call supabase.from()...')
-        const query = supabase.from('transactions')
-        console.log('Query object created:', query)
+        console.log('About to insert transactions...')
+        console.log('Transaction count:', transactionsToInsert.length)
         
-        console.log('About to call insert()...')
-        const insertQuery = query.insert(transactionsToInsert)
-        console.log('Insert query created:', insertQuery)
+        // Use Promise.race with timeout to detect hanging
+        const insertPromise = supabase
+          .from('transactions')
+          .insert(transactionsToInsert)
         
-        console.log('About to call select() and await...')
-        const result = await insertQuery.select('id')
-        console.log('Await completed!')
+        const timeoutPromise = new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('Insert timed out after 10 seconds')), 10000)
+        )
         
-        const { data, error } = result
-        console.log('Insert result:', { data, error })
+        const { data, error } = await Promise.race([insertPromise, timeoutPromise])
+        console.log('Insert completed!', { data, error })
         
         if (error) {
           console.error('Error importing batch:', error)
           errors += batch.length
         } else {
-          imported += data?.length || batch.length
+          imported += batch.length
           console.log('Batch imported successfully:', imported, 'total')
         }
       } catch (err) {
