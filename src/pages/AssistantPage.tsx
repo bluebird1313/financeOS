@@ -61,6 +61,8 @@ export default function AssistantPage() {
     setIsLoading(true)
 
     try {
+      console.log('📨 Sending message to AI assistant...')
+      
       // Limit context to prevent timeouts with large datasets
       const context = {
         transactions: transactions.slice(0, 50).map(t => ({
@@ -80,20 +82,20 @@ export default function AssistantPage() {
         })),
       }
 
+      console.log('📊 Context:', {
+        transactions: context.transactions.length,
+        balances: context.balances.length,
+        bills: context.bills.length,
+      })
+
       const history = messages.map(m => ({
         role: m.role,
         content: m.content,
       }))
 
-      // Add timeout to prevent infinite loading
-      const timeoutPromise = new Promise<string>((_, reject) => 
-        setTimeout(() => reject(new Error('Request timed out')), 30000)
-      )
-      
-      const response = await Promise.race([
-        chatWithAssistant(input.trim(), context, history),
-        timeoutPromise
-      ])
+      const response = await chatWithAssistant(input.trim(), context, history)
+
+      console.log('✅ AI response received')
 
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
@@ -104,17 +106,35 @@ export default function AssistantPage() {
 
       setMessages(prev => [...prev, assistantMessage])
     } catch (error: any) {
-      console.error('Chat error:', error)
+      console.error('❌ Chat error:', error)
+      
+      // Determine user-friendly error message
+      let errorContent = 'I apologize, but I encountered an error processing your request. Please try again.'
+      
+      if (error?.message) {
+        if (error.message.includes('Not authenticated') || error.message.includes('sign in')) {
+          errorContent = '🔐 Please sign in to use AI features.'
+        } else if (error.message.includes('timed out')) {
+          errorContent = '⏱️ The request took too long. Please try a simpler question or try again.'
+        } else if (error.message.includes('Supabase configuration') || error.message.includes('VITE_SUPABASE')) {
+          errorContent = '⚙️ AI features require proper configuration. Please ensure your environment is set up correctly.'
+        } else if (error.message.includes('OpenAI API key')) {
+          errorContent = '🔑 OpenAI API key is not configured on the server. Please contact the administrator.'
+        } else {
+          // Show the actual error for debugging
+          errorContent = `❌ ${error.message}`
+        }
+      }
+      
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: error?.message === 'Request timed out' 
-          ? 'The request took too long. Please try a simpler question or try again.'
-          : 'I apologize, but I encountered an error processing your request. Please try again.',
+        content: errorContent,
         timestamp: new Date(),
       }
       setMessages(prev => [...prev, errorMessage])
     } finally {
+      console.log('🏁 Request completed, setting isLoading to false')
       setIsLoading(false)
     }
   }

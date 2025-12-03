@@ -1,32 +1,76 @@
-import { supabase } from './supabase'
+import { supabase, isDemoMode } from './supabase'
 
 // Helper to call the secure OpenAI Edge Function
 async function callOpenAI(messages: Array<{ role: string; content: string }>, type: 'chat' | 'categorize' | 'insights' = 'chat'): Promise<string> {
+  // Check if running in demo mode
+  if (isDemoMode) {
+    throw new Error('AI features require Supabase configuration. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your .env file.')
+  }
+
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+  if (!supabaseUrl) {
+    throw new Error('Missing VITE_SUPABASE_URL environment variable')
+  }
+
+  console.log('🤖 Calling OpenAI via Edge Function...')
+  
   const { data: { session } } = await supabase.auth.getSession()
   
   if (!session) {
-    throw new Error('Not authenticated')
+    throw new Error('Not authenticated. Please sign in to use AI features.')
   }
 
-  const response = await fetch(
-    `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/openai-chat`,
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${session.access_token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ messages, type }),
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 60000) // 60 second timeout
+
+  try {
+    const response = await fetch(
+      `${supabaseUrl}/functions/v1/openai-chat`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ messages, type }),
+        signal: controller.signal,
+      }
+    )
+
+    clearTimeout(timeoutId)
+
+    console.log('🤖 OpenAI response status:', response.status)
+
+    if (!response.ok) {
+      let errorMessage = `API error: ${response.status}`
+      try {
+        const errorData = await response.json()
+        errorMessage = errorData.error || errorMessage
+        console.error('🤖 OpenAI error response:', errorData)
+      } catch {
+        // Response wasn't JSON
+        const text = await response.text()
+        console.error('🤖 OpenAI error text:', text)
+      }
+      throw new Error(errorMessage)
     }
-  )
 
-  if (!response.ok) {
-    const errorData = await response.json()
-    throw new Error(errorData.error || `API error: ${response.status}`)
+    const data = await response.json()
+    console.log('🤖 OpenAI response received successfully')
+    
+    if (!data.content) {
+      console.error('🤖 OpenAI response missing content:', data)
+      throw new Error('AI returned an empty response')
+    }
+    
+    return data.content
+  } catch (error: any) {
+    clearTimeout(timeoutId)
+    if (error.name === 'AbortError') {
+      throw new Error('Request timed out after 60 seconds. Please try again.')
+    }
+    throw error
   }
-
-  const data = await response.json()
-  return data.content
 }
 
 export interface CategorizedTransaction {
@@ -120,24 +164,35 @@ export async function chatWithAssistant(
   },
   conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>
 ): Promise<string> {
+  console.log('🤖 chatWithAssistant called with:', {
+    messageLength: message.length,
+    transactionCount: context.transactions?.length || 0,
+    balanceCount: context.balances?.length || 0,
+    billCount: context.bills?.length || 0,
+    historyLength: conversationHistory.length,
+  })
+
   const systemPrompt = `You are a helpful financial assistant for a personal finance app. You have access to the user's financial data and can answer questions about their spending, income, bills, and accounts.
 
 Current Financial Context:
-${context.balances ? `Account Balances: ${JSON.stringify(context.balances)}` : ''}
-${context.transactions ? `Recent Transactions (last 30): ${JSON.stringify(context.transactions.slice(0, 30))}` : ''}
-${context.bills ? `Upcoming Bills: ${JSON.stringify(context.bills)}` : ''}
+${context.balances?.length ? `Account Balances: ${JSON.stringify(context.balances)}` : 'No account data available.'}
+${context.transactions?.length ? `Recent Transactions (last 30): ${JSON.stringify(context.transactions.slice(0, 30))}` : 'No transaction data available.'}
+${context.bills?.length ? `Upcoming Bills: ${JSON.stringify(context.bills)}` : 'No bill data available.'}
 
 Be helpful, specific, and use actual numbers from their data when answering questions. If you don't have enough data to answer, say so.`
 
   try {
-    return await callOpenAI([
+    const result = await callOpenAI([
       { role: 'system', content: systemPrompt },
       ...conversationHistory.map(m => ({ role: m.role, content: m.content })),
       { role: 'user', content: message },
     ])
+    console.log('🤖 chatWithAssistant completed successfully')
+    return result
   } catch (error: any) {
     console.error('🤖 Chat Error:', error)
-    return `Error: ${error?.message || 'Unknown error'}. Please try again.`
+    // Re-throw for better error handling in the UI
+    throw error
   }
 }
 
