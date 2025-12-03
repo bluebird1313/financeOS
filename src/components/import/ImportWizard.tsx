@@ -393,11 +393,19 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
         console.log('Inserting batch:', transactionsToInsert.length, 'transactions')
         console.log('First transaction:', transactionsToInsert[0])
         
-        const { data, error } = await supabase
-          .from('transactions')
-          .insert(transactionsToInsert)
-          .select('id')
+        console.log('About to call supabase.from()...')
+        const query = supabase.from('transactions')
+        console.log('Query object created:', query)
         
+        console.log('About to call insert()...')
+        const insertQuery = query.insert(transactionsToInsert)
+        console.log('Insert query created:', insertQuery)
+        
+        console.log('About to call select() and await...')
+        const result = await insertQuery.select('id')
+        console.log('Await completed!')
+        
+        const { data, error } = result
         console.log('Insert result:', { data, error })
         
         if (error) {
