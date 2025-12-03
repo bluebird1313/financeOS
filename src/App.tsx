@@ -7,6 +7,7 @@ import AuthPage from '@/pages/AuthPage'
 import DashboardPage from '@/pages/DashboardPage'
 import AccountsPage from '@/pages/AccountsPage'
 import TransactionsPage from '@/pages/TransactionsPage'
+import TransactionDetailPage from '@/pages/TransactionDetailPage'
 import ChecksPage from '@/pages/ChecksPage'
 import BillsPage from '@/pages/BillsPage'
 import CashFlowPage from '@/pages/CashFlowPage'
@@ -59,6 +60,7 @@ export default function App() {
                   <Route path="/entities" element={<EntitiesPage />} />
                   <Route path="/accounts" element={<AccountsPage />} />
                   <Route path="/transactions" element={<TransactionsPage />} />
+                  <Route path="/transactions/:id" element={<TransactionDetailPage />} />
                   <Route path="/import" element={<ImportPage />} />
                   <Route path="/checks" element={<ChecksPage />} />
                   <Route path="/bills" element={<BillsPage />} />

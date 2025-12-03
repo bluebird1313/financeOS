@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { 
   Search, 
@@ -15,6 +16,7 @@ import {
   AlertTriangle,
   FolderKanban,
   X,
+  ExternalLink,
 } from 'lucide-react'
 import { useFinancialStore } from '@/stores/financialStore'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -53,6 +55,7 @@ import { useAuthStore } from '@/stores/authStore'
 import type { Transaction } from '@/types/database'
 
 export default function TransactionsPage() {
+  const navigate = useNavigate()
   const { 
     transactions, 
     accounts, 
@@ -384,7 +387,8 @@ export default function TransactionsPage() {
                   return (
                     <div 
                       key={transaction.id}
-                      className="flex items-center justify-between p-4 rounded-lg hover:bg-accent/50 transition-colors group"
+                      onClick={() => navigate(`/transactions/${transaction.id}`)}
+                      className="flex items-center justify-between p-4 rounded-lg hover:bg-accent/50 transition-colors group cursor-pointer"
                     >
                       <div className="flex items-center gap-4">
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
@@ -465,11 +469,17 @@ export default function TransactionsPage() {
                               variant="ghost" 
                               size="icon"
                               className="opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={(e) => e.stopPropagation()}
                             >
                               <MoreVertical className="w-4 h-4" />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => navigate(`/transactions/${transaction.id}`)}>
+                              <ExternalLink className="w-4 h-4 mr-2" />
+                              View Details
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
                             <DropdownMenuItem>
                               <Tag className="w-4 h-4 mr-2" />
                               Change Category
