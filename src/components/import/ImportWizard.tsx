@@ -1007,6 +1007,55 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
                     <CardTitle className="text-lg">Import Settings</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
+                    {/* Detected Account Info */}
+                    {detectedAccount?.mask && (
+                      <div className={`p-3 rounded-lg border ${
+                        selectedAccountId ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-yellow-500/10 border-yellow-500/30'
+                      }`}>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm font-medium">
+                              {selectedAccountId ? '✓ Account Matched' : '⚠ Account Detected'}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              File contains account ending in ****{detectedAccount.mask}
+                              {detectedAccount.accountType && ` (${detectedAccount.accountType})`}
+                            </p>
+                          </div>
+                          {!selectedAccountId && showCreateAccountPrompt && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={async () => {
+                                // Quick create account with detected info
+                                const { addAccount } = useFinancialStore.getState()
+                                const newAccount = await addAccount({
+                                  user_id: user!.id,
+                                  name: `Account ****${detectedAccount.mask}`,
+                                  type: detectedAccount.accountType || 'checking',
+                                  mask: detectedAccount.mask,
+                                  institution_name: detectedAccount.institutionName || null,
+                                  current_balance: 0,
+                                  is_manual: true,
+                                  currency: 'USD',
+                                })
+                                if (newAccount) {
+                                  setSelectedAccountId(newAccount.id)
+                                  setShowCreateAccountPrompt(false)
+                                  toast({
+                                    title: 'Account created',
+                                    description: `Created "${newAccount.name}"`,
+                                  })
+                                }
+                              }}
+                            >
+                              Create Account
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    
                     {/* Saved Profile Selector */}
                     {importProfiles.length > 0 && (
                       <div className="space-y-2 pb-4 border-b">
@@ -1036,9 +1085,14 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
                           <SelectContent>
                             {accounts.map(acc => {
                               const accBusiness = businesses.find(b => b.id === acc.business_id)
+                              const isMatch = detectedAccount?.mask && acc.mask === detectedAccount.mask
                               return (
                                 <SelectItem key={acc.id} value={acc.id}>
-                                  {acc.name} {accBusiness && `(${accBusiness.name})`}
+                                  <div className="flex items-center gap-2">
+                                    {acc.name} {acc.mask && `(****${acc.mask})`}
+                                    {accBusiness && <span className="text-muted-foreground">• {accBusiness.name}</span>}
+                                    {isMatch && <Badge className="bg-emerald-500/20 text-emerald-500 text-xs">Match</Badge>}
+                                  </div>
                                 </SelectItem>
                               )
                             })}

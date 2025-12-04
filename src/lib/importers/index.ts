@@ -65,6 +65,7 @@ export async function parseFile(
     skipRows?: number
     amountIsNegativeForDebits?: boolean
     sheetIndex?: number
+    filename?: string
   }
 ): Promise<ParseResult> {
   const fileType = detectFileType(file.name)
@@ -87,7 +88,7 @@ export async function parseFile(
     const text = await file.text()
     
     if (fileType === 'csv') {
-      return parseCSV(text, columnMapping, options)
+      return parseCSV(text, columnMapping, { ...options, filename: options?.filename || file.name })
     } else {
       // OFX-based formats
       return parseOFX(text)
