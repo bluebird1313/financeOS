@@ -820,6 +820,8 @@ export default function ImportCenterPage() {
         mask: '',
         business_id: '',
       })
+      // Go back to bulk assign dialog with new account selected
+      setTimeout(() => setShowBulkAssign(true), 100)
     } catch (error) {
       console.error('Error creating account:', error)
       toast({
@@ -1504,7 +1506,10 @@ export default function ImportCenterPage() {
             <Button 
               variant="outline" 
               className="w-full" 
-              onClick={() => setShowCreateAccount(true)}
+              onClick={() => {
+                setShowBulkAssign(false)
+                setTimeout(() => setShowCreateAccount(true), 100)
+              }}
             >
               <Building2 className="w-4 h-4 mr-2" />
               Create New Account

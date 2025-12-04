@@ -59,7 +59,14 @@ export default function BusinessPage() {
   })
 
   const handleAddBusiness = async () => {
-    if (!user) return
+    if (!user) {
+      toast({
+        title: 'Error',
+        description: 'You must be logged in to add a business.',
+        variant: 'destructive',
+      })
+      return
+    }
     
     const business = await addBusiness({
       user_id: user.id,
@@ -77,6 +84,12 @@ export default function BusinessPage() {
       setShowAddDialog(false)
       setSelectedBusinessId(business.id)
       resetForm()
+    } else {
+      toast({
+        title: 'Failed to add business',
+        description: 'There was an error adding the business. Please try again.',
+        variant: 'destructive',
+      })
     }
   }
 
