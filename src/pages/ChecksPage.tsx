@@ -216,7 +216,10 @@ export default function ImportCenterPage() {
           
           // For QBO/OFX/QFX files, use the local parser directly (much more reliable)
           if (type === 'qbo' || type === 'ofx' || type === 'qfx') {
+            console.log('🏦 Processing bank export file:', file.name, 'type:', type)
+            console.log('🏦 Content length:', content.length)
             const parseResult = parseOFX(content)
+            console.log('🏦 Parse result:', parseResult.success, 'transactions:', parseResult.transactions.length)
             
             if (!parseResult.success || parseResult.transactions.length === 0) {
               throw new Error(parseResult.errors?.[0]?.message || 'No transactions found in file')
