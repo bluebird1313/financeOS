@@ -4,6 +4,107 @@
 import type { ParsedTransaction, CategorySuggestion, MerchantCleanup, AICategorizationResult } from './types'
 import type { Category } from '@/types/database'
 
+// Check number detection patterns
+const CHECK_PATTERNS = [
+  /check\s*#?\s*(\d+)/i,                    // "Check #1234", "Check 1234", "CHECK #1234"
+  /chk\s*#?\s*(\d+)/i,                      // "CHK #1234", "CHK1234"
+  /ck\s*#?\s*(\d+)/i,                       // "CK #1234", "CK1234"
+  /check\s*no\.?\s*(\d+)/i,                 // "Check No. 1234", "Check No 1234"
+  /^(\d{3,6})\s+check$/i,                   // "1234 CHECK"
+  /debit\s*-?\s*check\s*#?\s*(\d+)/i,       // "DEBIT CHECK #1234"
+  /check\s*card\s*purchase.*?(\d{4})/i,     // Sometimes last 4 of check number
+  /check\s*withdrawal\s*#?\s*(\d+)/i,       // "CHECK WITHDRAWAL #1234"
+  /paid\s*check\s*#?\s*(\d+)/i,             // "PAID CHECK #1234"
+  /^\s*(\d{4,6})\s*$/,                      // Just a 4-6 digit number (common in check_number columns)
+]
+
+// Bill/Subscription detection patterns (for auto-categorization)
+const BILL_SUBSCRIPTION_PATTERNS = [
+  // Subscription services
+  { pattern: /netflix/i, type: 'subscription', merchant: 'Netflix' },
+  { pattern: /spotify/i, type: 'subscription', merchant: 'Spotify' },
+  { pattern: /hulu/i, type: 'subscription', merchant: 'Hulu' },
+  { pattern: /disney\s*\+/i, type: 'subscription', merchant: 'Disney+' },
+  { pattern: /hbo\s*max/i, type: 'subscription', merchant: 'HBO Max' },
+  { pattern: /apple\s*(music|tv|one|arcade|icloud)/i, type: 'subscription', merchant: 'Apple' },
+  { pattern: /amazon\s*prime/i, type: 'subscription', merchant: 'Amazon Prime' },
+  { pattern: /youtube\s*(premium|music)/i, type: 'subscription', merchant: 'YouTube' },
+  { pattern: /audible/i, type: 'subscription', merchant: 'Audible' },
+  { pattern: /adobe/i, type: 'subscription', merchant: 'Adobe' },
+  { pattern: /microsoft\s*365/i, type: 'subscription', merchant: 'Microsoft 365' },
+  { pattern: /office\s*365/i, type: 'subscription', merchant: 'Microsoft 365' },
+  { pattern: /dropbox/i, type: 'subscription', merchant: 'Dropbox' },
+  { pattern: /google\s*(one|storage|workspace)/i, type: 'subscription', merchant: 'Google' },
+  { pattern: /notion/i, type: 'subscription', merchant: 'Notion' },
+  { pattern: /slack/i, type: 'subscription', merchant: 'Slack' },
+  { pattern: /zoom/i, type: 'subscription', merchant: 'Zoom' },
+  
+  // Common bills
+  { pattern: /electric|power\s*company|edison|duke\s*energy/i, type: 'bill', merchant: 'Electric' },
+  { pattern: /gas\s*company|natural\s*gas/i, type: 'bill', merchant: 'Gas' },
+  { pattern: /water\s*(bill|utility|department)/i, type: 'bill', merchant: 'Water' },
+  { pattern: /internet|xfinity|comcast|spectrum|at&t|verizon\s*fios/i, type: 'bill', merchant: 'Internet' },
+  { pattern: /phone\s*bill|t-mobile|verizon\s*wireless/i, type: 'bill', merchant: 'Phone' },
+  { pattern: /insurance|geico|state\s*farm|progressive|allstate/i, type: 'bill', merchant: 'Insurance' },
+  { pattern: /rent|apartment|landlord|property\s*management/i, type: 'bill', merchant: 'Rent' },
+  { pattern: /mortgage|home\s*loan|wells\s*fargo\s*home/i, type: 'bill', merchant: 'Mortgage' },
+  { pattern: /car\s*payment|auto\s*loan/i, type: 'bill', merchant: 'Car Payment' },
+  { pattern: /student\s*loan|nelnet|navient|fedloan|sofi/i, type: 'bill', merchant: 'Student Loan' },
+]
+
+/**
+ * Detect if a transaction description contains a check number
+ * Returns the check number if found, null otherwise
+ */
+export function detectCheckNumber(description: string, checkNumberColumn?: string): string | null {
+  // If there's a dedicated check number column value, use it
+  if (checkNumberColumn && checkNumberColumn.trim()) {
+    const numericOnly = checkNumberColumn.replace(/\D/g, '')
+    if (numericOnly.length >= 3 && numericOnly.length <= 8) {
+      return numericOnly
+    }
+  }
+
+  // Check the description for check patterns
+  for (const pattern of CHECK_PATTERNS) {
+    const match = description.match(pattern)
+    if (match && match[1]) {
+      const num = match[1].replace(/\D/g, '')
+      // Validate it looks like a check number (3-8 digits)
+      if (num.length >= 3 && num.length <= 8) {
+        return num
+      }
+    }
+  }
+
+  return null
+}
+
+/**
+ * Detect if a transaction is likely a check, bill, or subscription
+ * Returns the type and relevant details
+ */
+export function detectPaymentType(description: string): {
+  type: 'check' | 'bill' | 'subscription' | 'regular'
+  checkNumber?: string
+  merchant?: string
+} {
+  // First, check for check patterns
+  const checkNumber = detectCheckNumber(description)
+  if (checkNumber) {
+    return { type: 'check', checkNumber }
+  }
+
+  // Check for bill/subscription patterns
+  for (const { pattern, type, merchant } of BILL_SUBSCRIPTION_PATTERNS) {
+    if (pattern.test(description)) {
+      return { type, merchant }
+    }
+  }
+
+  return { type: 'regular' }
+}
+
 // Common merchant patterns for local (non-AI) categorization
 const MERCHANT_PATTERNS: Record<string, { category: string; merchant: string }> = {
   // Food & Dining

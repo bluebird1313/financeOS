@@ -8,16 +8,12 @@ import DashboardPage from '@/pages/DashboardPage'
 import AccountsPage from '@/pages/AccountsPage'
 import TransactionsPage from '@/pages/TransactionsPage'
 import TransactionDetailPage from '@/pages/TransactionDetailPage'
-import ChecksPage from '@/pages/ChecksPage'
-import BillsPage from '@/pages/BillsPage'
-import CashFlowPage from '@/pages/CashFlowPage'
+import ImportPage from '@/pages/ImportPage'
+import ImportCenterPage from '@/pages/ChecksPage' // AI Import Center (formerly ChecksPage)
+import PaymentsPage from '@/pages/PaymentsPage' // Unified Bills/Checks/Subscriptions
 import BusinessPage from '@/pages/BusinessPage'
-import AlertsPage from '@/pages/AlertsPage'
-import AssistantPage from '@/pages/AssistantPage'
 import ReportsPage from '@/pages/ReportsPage'
 import SettingsPage from '@/pages/SettingsPage'
-import EntitiesPage from '@/pages/EntitiesPage'
-import ImportPage from '@/pages/ImportPage'
 import ProjectsPage from '@/pages/ProjectsPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -57,20 +53,23 @@ export default function App() {
               <MainLayout>
                 <Routes>
                   <Route path="/" element={<DashboardPage />} />
-                  <Route path="/entities" element={<EntitiesPage />} />
                   <Route path="/accounts" element={<AccountsPage />} />
                   <Route path="/transactions" element={<TransactionsPage />} />
                   <Route path="/transactions/:id" element={<TransactionDetailPage />} />
-                  <Route path="/import" element={<ImportPage />} />
-                  <Route path="/checks" element={<ChecksPage />} />
-                  <Route path="/bills" element={<BillsPage />} />
-                  <Route path="/cash-flow" element={<CashFlowPage />} />
-                  <Route path="/business" element={<BusinessPage />} />
+                  <Route path="/import" element={<ImportCenterPage />} />
                   <Route path="/projects" element={<ProjectsPage />} />
-                  <Route path="/alerts" element={<AlertsPage />} />
-                  <Route path="/assistant" element={<AssistantPage />} />
+                  <Route path="/payments" element={<PaymentsPage />} />
+                  <Route path="/business" element={<BusinessPage />} />
                   <Route path="/reports" element={<ReportsPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
+                  
+                  {/* Legacy redirects for bookmarks/old links */}
+                  <Route path="/entities" element={<Navigate to="/settings" replace />} />
+                  <Route path="/checks" element={<Navigate to="/payments" replace />} />
+                  <Route path="/bills" element={<Navigate to="/payments" replace />} />
+                  <Route path="/cash-flow" element={<Navigate to="/reports" replace />} />
+                  <Route path="/alerts" element={<Navigate to="/" replace />} />
+                  <Route path="/assistant" element={<Navigate to="/" replace />} />
                 </Routes>
               </MainLayout>
             </ProtectedRoute>

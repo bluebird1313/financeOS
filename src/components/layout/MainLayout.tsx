@@ -1,9 +1,10 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useAuthStore } from '@/stores/authStore'
 import { useFinancialStore } from '@/stores/financialStore'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import AIAssistantPanel, { AIFloatingButton } from '@/components/AIAssistantPanel'
 
 interface MainLayoutProps {
   children: React.ReactNode
@@ -21,6 +22,8 @@ export default function MainLayout({ children }: MainLayoutProps) {
     fetchAlerts,
     fetchRecurringTransactions,
   } = useFinancialStore()
+  
+  const [isAIOpen, setIsAIOpen] = useState(false)
 
   useEffect(() => {
     initialize()
@@ -58,6 +61,10 @@ export default function MainLayout({ children }: MainLayoutProps) {
             </div>
           </main>
         </div>
+        
+        {/* AI Assistant */}
+        <AIFloatingButton onClick={() => setIsAIOpen(true)} />
+        <AIAssistantPanel isOpen={isAIOpen} onClose={() => setIsAIOpen(false)} />
       </div>
     </TooltipProvider>
   )

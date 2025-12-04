@@ -2,34 +2,25 @@ import { useState, useCallback, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useDropzone } from 'react-dropzone'
 import { 
-  Plus, 
-  FileCheck, 
   Upload, 
-  Search, 
-  AlertCircle,
-  CheckCircle2,
-  Clock,
-  XCircle,
-  Image,
-  Sparkles,
-  Link2,
   FileText,
   FileSpreadsheet,
   File,
+  Image,
   Loader2,
-  Check as CheckIcon,
+  CheckCircle2,
   X,
   Edit3,
-  ChevronRight,
   RefreshCw,
   Inbox,
   ArrowRight,
   Building2,
   Tag,
   Briefcase,
-  HelpCircle,
   Trash2,
   CheckCheck,
+  Sparkles,
+  FileCheck,
 } from 'lucide-react'
 import { useFinancialStore } from '@/stores/financialStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -39,7 +30,6 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
 import { Progress } from '@/components/ui/progress'
 import {
   Dialog,
@@ -65,8 +55,8 @@ import {
 } from '@/components/ui/tooltip'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/ui/use-toast'
-import { suggestCheckPayee, processDocumentImport, readFileContent } from '@/lib/openai'
-import type { Check, PendingImportItem, DocumentImport } from '@/types/database'
+import { processDocumentImport, readFileContent } from '@/lib/openai'
+import type { PendingImportItem, DocumentImport } from '@/types/database'
 
 const fileTypeIcons: Record<string, React.ElementType> = {
   csv: FileSpreadsheet,
@@ -83,20 +73,14 @@ const getFileIcon = (fileName: string) => {
   return fileTypeIcons[ext] || File
 }
 
-export default function ChecksPage() {
+export default function ImportCenterPage() {
   const { user } = useAuthStore()
   const { 
-    checks, 
     accounts, 
     categories, 
     businesses,
-    transactions,
     addCheck, 
-    updateCheck,
     addTransaction,
-    matchCheckToTransaction,
-    getUnmatchedChecks,
-    isLoadingChecks,
     fetchAccounts,
   } = useFinancialStore()
   const { toast } = useToast()
@@ -104,27 +88,7 @@ export default function ChecksPage() {
   // Tab state
   const [activeTab, setActiveTab] = useState('upload')
   
-  // Dialog states
-  const [showAddDialog, setShowAddDialog] = useState(false)
-  const [showMatchDialog, setShowMatchDialog] = useState(false)
-  const [selectedCheck, setSelectedCheck] = useState<Check | null>(null)
-  
-  // Check form state
-  const [searchQuery, setSearchQuery] = useState('')
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'cleared' | 'void'>('all')
-  const [isGeneratingSuggestion, setIsGeneratingSuggestion] = useState(false)
-  const [formData, setFormData] = useState({
-    check_number: '',
-    payee: '',
-    amount: '',
-    date_written: new Date().toISOString().split('T')[0],
-    memo: '',
-    account_id: '',
-    category_id: '',
-    business_id: '',
-  })
-
-  // Document import states
+  // Document upload states
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
   const [isProcessing, setIsProcessing] = useState(false)
   const [processingProgress, setProcessingProgress] = useState(0)
@@ -142,8 +106,6 @@ export default function ChecksPage() {
     description: '',
     amount: '',
   })
-
-  const unmatchedChecks = getUnmatchedChecks()
 
   // Fetch pending items on mount
   useEffect(() => {
@@ -260,7 +222,7 @@ export default function ChecksPage() {
             totalItems += result.items_created || 0
             totalProcessed++
             toast({
-              title: `✅ Processed ${file.name}`,
+              title: `Processed ${file.name}`,
               description: `Found ${result.items_created || 0} items. ${result.summary}`,
             })
           } else {
@@ -298,7 +260,7 @@ export default function ChecksPage() {
       
       // Show summary
       toast({
-        title: '🎉 Import Complete!',
+        title: 'Import Complete!',
         description: `Processed ${totalProcessed} file(s), found ${totalItems} items ready for review.`,
         variant: 'success',
       })
@@ -369,6 +331,7 @@ export default function ChecksPage() {
           is_business_expense: item.is_business_expense,
           is_manual: true,
           notes: item.memo || null,
+          check_number: item.check_number || null,
         })
 
         if (transaction) {
@@ -384,7 +347,7 @@ export default function ChecksPage() {
       }
 
       toast({
-        title: '✅ Item Approved',
+        title: 'Item Approved',
         description: `${item.description} has been imported.`,
       })
 
@@ -467,138 +430,6 @@ export default function ChecksPage() {
     }
   }
 
-  // Check functions (existing)
-  const potentialMatches = selectedCheck ? transactions.filter(t => {
-    if (!t.check_number) return false
-    const checkNum = t.check_number.replace(/\D/g, '')
-    const selectedNum = selectedCheck.check_number.replace(/\D/g, '')
-    return checkNum === selectedNum && Math.abs(t.amount) === selectedCheck.amount
-  }) : []
-
-  const handleAddCheck = async () => {
-    if (!user || !formData.account_id) return
-    
-    const check = await addCheck({
-      user_id: user.id,
-      account_id: formData.account_id,
-      check_number: formData.check_number,
-      payee: formData.payee,
-      amount: parseFloat(formData.amount) || 0,
-      date_written: formData.date_written,
-      memo: formData.memo || null,
-      category_id: formData.category_id || null,
-      business_id: formData.business_id || null,
-      status: 'pending',
-    })
-
-    if (check) {
-      toast({
-        title: 'Check recorded',
-        description: `Check #${formData.check_number} to ${formData.payee} has been recorded.`,
-        variant: 'success',
-      })
-      setShowAddDialog(false)
-      resetForm()
-    }
-  }
-
-  const handleMatchCheck = async (transactionId: string) => {
-    if (!selectedCheck) return
-    
-    await matchCheckToTransaction(selectedCheck.id, transactionId)
-    toast({
-      title: 'Check matched',
-      description: 'The check has been matched to the transaction.',
-      variant: 'success',
-    })
-    setShowMatchDialog(false)
-    setSelectedCheck(null)
-  }
-
-  const handleSuggestPayee = async () => {
-    if (!formData.check_number || !formData.amount) {
-      toast({
-        title: 'Missing information',
-        description: 'Please enter check number and amount first.',
-        variant: 'destructive',
-      })
-      return
-    }
-
-    setIsGeneratingSuggestion(true)
-    try {
-      const previousChecks = checks
-        .filter(c => c.payee)
-        .map(c => ({
-          payee: c.payee,
-          amount: c.amount,
-          checkNumber: c.check_number,
-        }))
-
-      const suggestion = await suggestCheckPayee(
-        formData.check_number,
-        parseFloat(formData.amount),
-        previousChecks
-      )
-
-      if (suggestion) {
-        setFormData(prev => ({ ...prev, payee: suggestion.payee }))
-        toast({
-          title: 'AI Suggestion',
-          description: `Based on your history, this check might be for "${suggestion.payee}" (${Math.round(suggestion.confidence * 100)}% confident)`,
-        })
-      } else {
-        toast({
-          title: 'No suggestion available',
-          description: 'Not enough data to suggest a payee.',
-        })
-      }
-    } catch {
-      toast({
-        title: 'Error',
-        description: 'Failed to generate suggestion.',
-        variant: 'destructive',
-      })
-    } finally {
-      setIsGeneratingSuggestion(false)
-    }
-  }
-
-  const resetForm = () => {
-    setFormData({
-      check_number: '',
-      payee: '',
-      amount: '',
-      date_written: new Date().toISOString().split('T')[0],
-      memo: '',
-      account_id: accounts[0]?.id || '',
-      category_id: '',
-      business_id: '',
-    })
-  }
-
-  const filteredChecks = checks.filter(check => {
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase()
-      if (!check.payee.toLowerCase().includes(query) && 
-          !check.check_number.includes(query)) {
-        return false
-      }
-    }
-    if (statusFilter !== 'all' && check.status !== statusFilter) {
-      return false
-    }
-    return true
-  })
-
-  const getStatusIcon = (status: Check['status']) => {
-    switch (status) {
-      case 'cleared': return <CheckCircle2 className="w-4 h-4 text-success" />
-      case 'pending': return <Clock className="w-4 h-4 text-warning" />
-      case 'void': return <XCircle className="w-4 h-4 text-destructive" />
-    }
-  }
-
   const containerVariants = {
     hidden: { opacity: 0 },
     visible: { opacity: 1, transition: { staggerChildren: 0.1 } }
@@ -619,13 +450,9 @@ export default function ChecksPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="font-display text-3xl font-bold">Import Center</h1>
-          <p className="text-muted-foreground">Upload documents and manage checks</p>
+          <h1 className="font-display text-3xl font-bold">AI Import Center</h1>
+          <p className="text-muted-foreground">Upload documents for AI-powered extraction</p>
         </div>
-        <Button onClick={() => setShowAddDialog(true)}>
-          <Plus className="w-4 h-4 mr-2" />
-          Manual Entry
-        </Button>
       </div>
 
       {/* Alert for pending review items */}
@@ -657,7 +484,7 @@ export default function ChecksPage() {
 
       {/* Main Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger value="upload" className="flex items-center gap-2">
             <Upload className="w-4 h-4" />
             Upload Documents
@@ -668,10 +495,6 @@ export default function ChecksPage() {
             {pendingItems.length > 0 && (
               <Badge variant="secondary" className="ml-1">{pendingItems.length}</Badge>
             )}
-          </TabsTrigger>
-          <TabsTrigger value="checks" className="flex items-center gap-2">
-            <FileCheck className="w-4 h-4" />
-            Check Register
           </TabsTrigger>
         </TabsList>
 
@@ -1060,12 +883,12 @@ export default function ChecksPage() {
                                 {/* AI Notes */}
                                 {item.ai_notes && (
                                   <p className="text-xs text-muted-foreground mt-2 italic">
-                                    💡 {item.ai_notes}
+                                    {item.ai_notes}
                                   </p>
                                 )}
                                 {item.needs_review_reason && (
                                   <p className="text-xs text-warning mt-1">
-                                    ⚠️ {item.needs_review_reason}
+                                    {item.needs_review_reason}
                                   </p>
                                 )}
                               </div>
@@ -1131,7 +954,7 @@ export default function ChecksPage() {
                                           className="h-8 w-8"
                                           onClick={() => approveItem(item)}
                                         >
-                                          <CheckIcon className="w-4 h-4" />
+                                          <CheckCircle2 className="w-4 h-4" />
                                         </Button>
                                       </TooltipTrigger>
                                       <TooltipContent>Approve & Import</TooltipContent>
@@ -1150,429 +973,7 @@ export default function ChecksPage() {
             </Card>
           </motion.div>
         </TabsContent>
-
-        {/* Check Register Tab */}
-        <TabsContent value="checks" className="space-y-6">
-          {/* Unmatched Checks Alert */}
-          {unmatchedChecks.length > 0 && (
-            <motion.div variants={itemVariants}>
-              <Card className="border-warning/50 bg-warning/5">
-                <CardContent className="py-4">
-                  <div className="flex items-center gap-4">
-                    <AlertCircle className="w-8 h-8 text-warning" />
-                    <div className="flex-1">
-                      <h3 className="font-semibold">
-                        {unmatchedChecks.length} Unmatched Check{unmatchedChecks.length !== 1 ? 's' : ''}
-                      </h3>
-                      <p className="text-sm text-muted-foreground">
-                        These checks need to be matched with bank transactions.
-                      </p>
-                    </div>
-                    <Button variant="outline" onClick={() => setStatusFilter('pending')}>
-                      Review Now
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
-          )}
-
-          {/* Summary Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <motion.div variants={itemVariants}>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardDescription>Total Checks</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{checks.length}</div>
-                </CardContent>
-              </Card>
-            </motion.div>
-            <motion.div variants={itemVariants}>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardDescription>Pending</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-warning">
-                    {checks.filter(c => c.status === 'pending').length}
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
-            <motion.div variants={itemVariants}>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardDescription>Cleared</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-success">
-                    {checks.filter(c => c.status === 'cleared').length}
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
-            <motion.div variants={itemVariants}>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardDescription>Pending Amount</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">
-                    {formatCurrency(checks.filter(c => c.status === 'pending').reduce((sum, c) => sum + c.amount, 0))}
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
-          </div>
-
-          {/* Filters */}
-          <motion.div variants={itemVariants}>
-            <Card>
-              <CardContent className="py-4">
-                <div className="flex flex-wrap gap-4">
-                  <div className="flex-1 min-w-[200px]">
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                      <Input
-                        placeholder="Search by payee or check number..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="pl-10"
-                      />
-                    </div>
-                  </div>
-                  <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as typeof statusFilter)}>
-                    <SelectTrigger className="w-[150px]">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Status</SelectItem>
-                      <SelectItem value="pending">Pending</SelectItem>
-                      <SelectItem value="cleared">Cleared</SelectItem>
-                      <SelectItem value="void">Void</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </CardContent>
-            </Card>
-          </motion.div>
-
-          {/* Check List */}
-          <motion.div variants={itemVariants}>
-            <Card>
-              <CardHeader>
-                <CardTitle>Check History</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {isLoadingChecks ? (
-                  <div className="flex items-center justify-center py-12">
-                    <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-                  </div>
-                ) : filteredChecks.length === 0 ? (
-                  <div className="text-center py-12">
-                    <FileCheck className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-                    <h3 className="font-semibold mb-2">No checks recorded</h3>
-                    <p className="text-muted-foreground mb-4">
-                      Record checks manually or import them from documents.
-                    </p>
-                    <div className="flex gap-2 justify-center">
-                      <Button variant="outline" onClick={() => setActiveTab('upload')}>
-                        <Upload className="w-4 h-4 mr-2" />
-                        Import from File
-                      </Button>
-                      <Button onClick={() => setShowAddDialog(true)}>
-                        <Plus className="w-4 h-4 mr-2" />
-                        Add Manually
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {filteredChecks.map((check) => {
-                      const account = accounts.find(a => a.id === check.account_id)
-                      const category = categories.find(c => c.id === check.category_id)
-                      const business = businesses.find(b => b.id === check.business_id)
-                      
-                      return (
-                        <div 
-                          key={check.id}
-                          className="flex items-center justify-between p-4 rounded-lg hover:bg-accent/50 transition-colors"
-                        >
-                          <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 rounded-xl bg-secondary flex items-center justify-center">
-                              <FileCheck className="w-6 h-6 text-muted-foreground" />
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <span className="font-semibold">#{check.check_number}</span>
-                                <span className="text-muted-foreground">to</span>
-                                <span className="font-medium">{check.payee}</span>
-                                {getStatusIcon(check.status)}
-                              </div>
-                              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                                <span>{formatDate(check.date_written)}</span>
-                                {account && (
-                                  <>
-                                    <span>•</span>
-                                    <span>{account.name}</span>
-                                  </>
-                                )}
-                                {category && (
-                                  <>
-                                    <span>•</span>
-                                    <span>{category.name}</span>
-                                  </>
-                                )}
-                                {business && (
-                                  <>
-                                    <span>•</span>
-                                    <Badge variant="secondary" className="text-xs">{business.name}</Badge>
-                                  </>
-                                )}
-                              </div>
-                              {check.memo && (
-                                <div className="text-sm text-muted-foreground mt-1">
-                                  Memo: {check.memo}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                          
-                          <div className="flex items-center gap-4">
-                            <div className="text-lg font-semibold">
-                              {formatCurrency(check.amount)}
-                            </div>
-                            {check.status === 'pending' && !check.matched_transaction_id && (
-                              <Button 
-                                variant="outline" 
-                                size="sm"
-                                onClick={() => {
-                                  setSelectedCheck(check)
-                                  setShowMatchDialog(true)
-                                }}
-                              >
-                                <Link2 className="w-4 h-4 mr-2" />
-                                Match
-                              </Button>
-                            )}
-                            <Badge variant={
-                              check.status === 'cleared' ? 'success' :
-                              check.status === 'pending' ? 'warning' : 'destructive'
-                            }>
-                              {check.status}
-                            </Badge>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </motion.div>
-        </TabsContent>
       </Tabs>
-
-      {/* Add Check Dialog */}
-      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Record a Check</DialogTitle>
-            <DialogDescription>
-              Log check details as you write them for easy tracking.
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="space-y-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="check_number">Check Number</Label>
-                <Input
-                  id="check_number"
-                  placeholder="e.g., 1234"
-                  value={formData.check_number}
-                  onChange={(e) => setFormData(prev => ({ ...prev, check_number: e.target.value }))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="amount">Amount</Label>
-                <Input
-                  id="amount"
-                  type="number"
-                  step="0.01"
-                  placeholder="0.00"
-                  value={formData.amount}
-                  onChange={(e) => setFormData(prev => ({ ...prev, amount: e.target.value }))}
-                />
-              </div>
-            </div>
-            
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="payee">Payee</Label>
-                <Button 
-                  type="button" 
-                  variant="ghost" 
-                  size="sm"
-                  onClick={handleSuggestPayee}
-                  disabled={isGeneratingSuggestion}
-                >
-                  <Sparkles className="w-4 h-4 mr-1" />
-                  {isGeneratingSuggestion ? 'Thinking...' : 'AI Suggest'}
-                </Button>
-              </div>
-              <Input
-                id="payee"
-                placeholder="Who is this check for?"
-                value={formData.payee}
-                onChange={(e) => setFormData(prev => ({ ...prev, payee: e.target.value }))}
-              />
-            </div>
-            
-            <div className="space-y-2">
-              <Label htmlFor="date_written">Date Written</Label>
-              <Input
-                id="date_written"
-                type="date"
-                value={formData.date_written}
-                onChange={(e) => setFormData(prev => ({ ...prev, date_written: e.target.value }))}
-              />
-            </div>
-            
-            <div className="space-y-2">
-              <Label htmlFor="account">Account</Label>
-              <Select
-                value={formData.account_id}
-                onValueChange={(value) => setFormData(prev => ({ ...prev, account_id: value }))}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select account" />
-                </SelectTrigger>
-                <SelectContent>
-                  {accounts.filter(a => a.type === 'checking').map(account => (
-                    <SelectItem key={account.id} value={account.id}>{account.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            
-            <div className="space-y-2">
-              <Label htmlFor="memo">Memo (Optional)</Label>
-              <Textarea
-                id="memo"
-                placeholder="What is this check for?"
-                value={formData.memo}
-                onChange={(e) => setFormData(prev => ({ ...prev, memo: e.target.value }))}
-                rows={2}
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="category">Category (Optional)</Label>
-                <Select
-                  value={formData.category_id}
-                  onValueChange={(value) => setFormData(prev => ({ ...prev, category_id: value }))}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {categories.map(category => (
-                      <SelectItem key={category.id} value={category.id}>{category.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {businesses.length > 0 && (
-                <div className="space-y-2">
-                  <Label htmlFor="business">Business (Optional)</Label>
-                  <Select
-                    value={formData.business_id || '_personal'}
-                    onValueChange={(value) => setFormData(prev => ({ ...prev, business_id: value === '_personal' ? '' : value }))}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Personal" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="_personal">Personal</SelectItem>
-                      {businesses.map(business => (
-                        <SelectItem key={business.id} value={business.id}>{business.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-            </div>
-          </div>
-          
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowAddDialog(false)}>Cancel</Button>
-            <Button 
-              onClick={handleAddCheck} 
-              disabled={!formData.check_number || !formData.payee || !formData.amount || !formData.account_id}
-            >
-              Record Check
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Match Check Dialog */}
-      <Dialog open={showMatchDialog} onOpenChange={setShowMatchDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Match Check to Transaction</DialogTitle>
-            <DialogDescription>
-              Select the bank transaction that corresponds to this check.
-            </DialogDescription>
-          </DialogHeader>
-          
-          {selectedCheck && (
-            <div className="py-4">
-              <div className="bg-accent/50 p-4 rounded-lg mb-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="font-semibold">Check #{selectedCheck.check_number}</div>
-                    <div className="text-sm text-muted-foreground">To: {selectedCheck.payee}</div>
-                  </div>
-                  <div className="text-lg font-bold">{formatCurrency(selectedCheck.amount)}</div>
-                </div>
-              </div>
-              
-              <div className="space-y-2">
-                <Label>Potential Matches</Label>
-                {potentialMatches.length === 0 ? (
-                  <div className="text-center py-4 text-muted-foreground">
-                    No matching transactions found. The check may not have cleared yet.
-                  </div>
-                ) : (
-                  potentialMatches.map(transaction => (
-                    <div 
-                      key={transaction.id}
-                      className="flex items-center justify-between p-3 rounded-lg border hover:bg-accent cursor-pointer"
-                      onClick={() => handleMatchCheck(transaction.id)}
-                    >
-                      <div>
-                        <div className="font-medium">{transaction.name}</div>
-                        <div className="text-sm text-muted-foreground">{formatDate(transaction.date)}</div>
-                      </div>
-                      <div className="font-semibold">{formatCurrency(Math.abs(transaction.amount))}</div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          )}
-          
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowMatchDialog(false)}>Cancel</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Edit Pending Item Dialog */}
       <Dialog open={!!editingItem} onOpenChange={() => setEditingItem(null)}>

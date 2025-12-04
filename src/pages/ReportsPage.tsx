@@ -7,9 +7,13 @@ import {
   PieChart,
   BarChart3,
   TrendingUp,
+  TrendingDown,
   FileText,
   FileSpreadsheet,
   FolderKanban,
+  DollarSign,
+  Target,
+  AlertTriangle,
 } from 'lucide-react'
 import { useFinancialStore } from '@/stores/financialStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -43,6 +47,8 @@ import {
   Cell,
   BarChart,
   Bar,
+  AreaChart,
+  Area,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -50,16 +56,18 @@ import {
   ResponsiveContainer,
   Legend,
 } from 'recharts'
+import { Progress } from '@/components/ui/progress'
 
 const COLORS = ['#10b981', '#06b6d4', '#8b5cf6', '#f59e0b', '#ef4444', '#ec4899', '#6366f1', '#84cc16']
 
 export default function ReportsPage() {
-  const { transactions, accounts, businesses, categories, projects, fetchProjects } = useFinancialStore()
+  const { transactions, accounts, businesses, categories, projects, bills, getNetWorth, fetchProjects } = useFinancialStore()
   const { user } = useAuthStore()
   const { toast } = useToast()
   const [timeRange, setTimeRange] = useState<'month' | 'quarter' | 'year'>('month')
   const [selectedBusiness, setSelectedBusiness] = useState<string>('all')
   const [showExportDialog, setShowExportDialog] = useState(false)
+  const [cashFlowRange, setCashFlowRange] = useState<'7d' | '30d' | '90d' | '1y'>('30d')
   const [exportOptions, setExportOptions] = useState({
     format: 'excel' as 'excel' | 'csv',
     includeAllProjects: true,
@@ -138,6 +146,94 @@ export default function ReportsPage() {
 
     return Object.values(months).slice(-12)
   }, [transactions])
+
+  // Cash flow data for the Cash Flow tab
+  const cashFlowData = useMemo(() => {
+    const now = new Date()
+    let daysBack: number
+    switch (cashFlowRange) {
+      case '7d': daysBack = 7; break
+      case '30d': daysBack = 30; break
+      case '90d': daysBack = 90; break
+      case '1y': daysBack = 365; break
+    }
+
+    const startDate = new Date(now.getTime() - daysBack * 24 * 60 * 60 * 1000)
+    const dailyData: Record<string, { income: number; expenses: number; date: string }> = {}
+    
+    transactions
+      .filter(t => {
+        const txDate = new Date(t.date)
+        return txDate >= startDate && txDate <= now
+      })
+      .forEach(t => {
+        const dateKey = t.date.split('T')[0]
+        if (!dailyData[dateKey]) {
+          dailyData[dateKey] = { income: 0, expenses: 0, date: dateKey }
+        }
+        if (t.amount > 0) {
+          dailyData[dateKey].income += t.amount
+        } else {
+          dailyData[dateKey].expenses += Math.abs(t.amount)
+        }
+      })
+
+    return Object.values(dailyData).sort((a, b) => a.date.localeCompare(b.date))
+  }, [transactions, cashFlowRange])
+
+  const cashFlowTotals = {
+    income: cashFlowData.reduce((sum, d) => sum + d.income, 0),
+    expenses: cashFlowData.reduce((sum, d) => sum + d.expenses, 0),
+  }
+  const netCashFlow = cashFlowTotals.income - cashFlowTotals.expenses
+
+  // 30-day forecast
+  const forecastData = useMemo(() => {
+    const avgDailyIncome = cashFlowData.length > 0 ? cashFlowTotals.income / cashFlowData.length : 0
+    const avgDailyExpenses = cashFlowData.length > 0 ? cashFlowTotals.expenses / cashFlowData.length : 0
+    
+    const forecast = []
+    let balance = getNetWorth()
+    
+    for (let i = 1; i <= 30; i++) {
+      const date = new Date()
+      date.setDate(date.getDate() + i)
+      balance += avgDailyIncome - avgDailyExpenses
+      
+      bills.forEach(bill => {
+        const billDate = new Date(bill.due_date)
+        if (billDate.toDateString() === date.toDateString() && bill.status !== 'paid') {
+          balance -= bill.amount
+        }
+      })
+      
+      forecast.push({
+        date: date.toISOString().split('T')[0],
+        balance,
+        label: new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(date),
+      })
+    }
+    
+    return forecast
+  }, [cashFlowData, cashFlowTotals, bills, getNetWorth])
+
+  // Category breakdown for spending
+  const categoryBreakdown = useMemo(() => {
+    const breakdown: Record<string, number> = {}
+    
+    filteredTransactions
+      .filter(t => t.amount < 0)
+      .forEach(t => {
+        const cat = categories.find(c => c.id === t.category_id)
+        const name = cat?.name || 'Uncategorized'
+        breakdown[name] = (breakdown[name] || 0) + Math.abs(t.amount)
+      })
+
+    return Object.entries(breakdown)
+      .map(([category, amount]) => ({ category, amount }))
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 8)
+  }, [filteredTransactions, categories])
 
   // Calculate totals
   const totalIncome = filteredTransactions
@@ -359,6 +455,10 @@ export default function ReportsPage() {
               <BarChart3 className="w-4 h-4 mr-2" />
               Trends
             </TabsTrigger>
+            <TabsTrigger value="cashflow">
+              <DollarSign className="w-4 h-4 mr-2" />
+              Cash Flow
+            </TabsTrigger>
             <TabsTrigger value="income">
               <TrendingUp className="w-4 h-4 mr-2" />
               Income
@@ -483,6 +583,252 @@ export default function ReportsPage() {
                 </div>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* Cash Flow Tab */}
+          <TabsContent value="cashflow" className="mt-4 space-y-6">
+            {/* Cash Flow Controls */}
+            <div className="flex justify-end">
+              <Select value={cashFlowRange} onValueChange={(v) => setCashFlowRange(v as typeof cashFlowRange)}>
+                <SelectTrigger className="w-[130px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="7d">Last 7 days</SelectItem>
+                  <SelectItem value="30d">Last 30 days</SelectItem>
+                  <SelectItem value="90d">Last 90 days</SelectItem>
+                  <SelectItem value="1y">Last year</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Cash Flow Summary */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardDescription className="flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4 text-success" />
+                    Income
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-success">
+                    +{formatCurrency(cashFlowTotals.income)}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardDescription className="flex items-center gap-2">
+                    <TrendingDown className="w-4 h-4 text-destructive" />
+                    Expenses
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-destructive">
+                    -{formatCurrency(cashFlowTotals.expenses)}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className={netCashFlow >= 0 ? 'border-success/20' : 'border-destructive/20'}>
+                <CardHeader className="pb-2">
+                  <CardDescription className="flex items-center gap-2">
+                    <DollarSign className="w-4 h-4" />
+                    Net Cash Flow
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className={`text-2xl font-bold ${netCashFlow >= 0 ? 'text-success' : 'text-destructive'}`}>
+                    {netCashFlow >= 0 ? '+' : ''}{formatCurrency(netCashFlow)}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardDescription className="flex items-center gap-2">
+                    <Target className="w-4 h-4" />
+                    Savings Rate
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">
+                    {cashFlowTotals.income > 0 ? Math.round((netCashFlow / cashFlowTotals.income) * 100) : 0}%
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Cash Flow Chart */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Cash Flow Over Time</CardTitle>
+                <CardDescription>Income vs expenses trend</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="h-[350px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={cashFlowData}>
+                      <defs>
+                        <linearGradient id="cfIncomeGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                        </linearGradient>
+                        <linearGradient id="cfExpenseGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+                      <XAxis 
+                        dataKey="date" 
+                        stroke="#71717a"
+                        fontSize={12}
+                        tickFormatter={(date) => new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(date))}
+                      />
+                      <YAxis 
+                        stroke="#71717a"
+                        fontSize={12}
+                        tickFormatter={(value) => `$${(value / 1000).toFixed(1)}k`}
+                      />
+                      <Tooltip 
+                        contentStyle={{
+                          backgroundColor: '#18181b',
+                          border: '1px solid #27272a',
+                          borderRadius: '8px',
+                        }}
+                        formatter={(value: number) => formatCurrency(value)}
+                      />
+                      <Legend />
+                      <Area
+                        type="monotone"
+                        dataKey="income"
+                        stroke="#10b981"
+                        strokeWidth={2}
+                        fill="url(#cfIncomeGradient)"
+                        name="Income"
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="expenses"
+                        stroke="#ef4444"
+                        strokeWidth={2}
+                        fill="url(#cfExpenseGradient)"
+                        name="Expenses"
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Forecast and Spending Breakdown */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* 30-Day Forecast */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Calendar className="w-5 h-5" />
+                    30-Day Balance Forecast
+                  </CardTitle>
+                  <CardDescription>
+                    Projected balance based on your spending patterns
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={forecastData}>
+                        <defs>
+                          <linearGradient id="balanceGradient" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.3}/>
+                            <stop offset="95%" stopColor="#06b6d4" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+                        <XAxis 
+                          dataKey="label" 
+                          stroke="#71717a"
+                          fontSize={11}
+                        />
+                        <YAxis 
+                          stroke="#71717a"
+                          fontSize={12}
+                          tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+                        />
+                        <Tooltip 
+                          contentStyle={{
+                            backgroundColor: '#18181b',
+                            border: '1px solid #27272a',
+                            borderRadius: '8px',
+                          }}
+                          formatter={(value: number) => formatCurrency(value)}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="balance"
+                          stroke="#06b6d4"
+                          strokeWidth={2}
+                          fill="url(#balanceGradient)"
+                          name="Projected Balance"
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                  
+                  {forecastData.some(d => d.balance < 0) && (
+                    <div className="mt-4 p-3 rounded-lg bg-destructive/10 border border-destructive/20">
+                      <div className="flex items-center gap-2 text-destructive">
+                        <AlertTriangle className="w-4 h-4" />
+                        <span className="font-medium">Low Balance Warning</span>
+                      </div>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Your balance may go negative in the next 30 days. Consider reviewing upcoming expenses.
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Spending by Category */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Spending by Category</CardTitle>
+                  <CardDescription>
+                    Where your money is going
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {categoryBreakdown.length === 0 ? (
+                    <div className="text-center py-12 text-muted-foreground">
+                      No spending data available
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {categoryBreakdown.map((item) => {
+                        const percentage = totalExpenses > 0 ? (item.amount / totalExpenses) * 100 : 0
+                        return (
+                          <div key={item.category} className="space-y-2">
+                            <div className="flex items-center justify-between text-sm">
+                              <span className="font-medium">{item.category}</span>
+                              <span className="text-muted-foreground">
+                                {formatCurrency(item.amount)} ({percentage.toFixed(1)}%)
+                              </span>
+                            </div>
+                            <Progress 
+                              value={percentage} 
+                              className="h-2"
+                            />
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
 
           <TabsContent value="income" className="mt-4">

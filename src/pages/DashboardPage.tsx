@@ -4,7 +4,6 @@ import {
   TrendingDown, 
   Wallet, 
   CreditCard, 
-  AlertTriangle,
   ArrowUpRight,
   ArrowDownRight,
   Clock,
@@ -17,6 +16,7 @@ import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { formatCurrency, formatDate, formatRelativeDate } from '@/lib/utils'
 import { useNavigate } from 'react-router-dom'
+import AlertsWidget from '@/components/AlertsWidget'
 import {
   AreaChart,
   Area,
@@ -42,18 +42,25 @@ export default function DashboardPage() {
   const navigate = useNavigate()
   const { 
     accounts, 
+    transactions,
     getNetWorth, 
     getRecentTransactions, 
     getUnmatchedChecks,
     getUpcomingBills,
-    alerts,
   } = useFinancialStore()
 
   const netWorth = getNetWorth()
   const recentTransactions = getRecentTransactions(5)
   const unmatchedChecks = getUnmatchedChecks()
   const upcomingBills = getUpcomingBills()
-  const unreadAlerts = alerts.filter(a => !a.is_read)
+  
+  // Calculate monthly cash flow
+  const now = new Date()
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+  const monthlyTransactions = transactions.filter(t => new Date(t.date) >= startOfMonth)
+  const monthlyIncome = monthlyTransactions.filter(t => t.amount > 0).reduce((sum, t) => sum + t.amount, 0)
+  const monthlyExpenses = monthlyTransactions.filter(t => t.amount < 0).reduce((sum, t) => sum + Math.abs(t.amount), 0)
+  const monthlySavings = monthlyIncome - monthlyExpenses
 
   const totalAssets = accounts
     .filter(a => a.type !== 'credit' && a.type !== 'loan')
@@ -154,22 +161,20 @@ export default function DashboardPage() {
         </motion.div>
 
         <motion.div variants={itemVariants}>
-          <Card className={unreadAlerts.length > 0 ? 'border-warning/50' : ''}>
+          <Card className={monthlySavings >= 0 ? 'border-success/20' : 'border-destructive/20'}>
             <CardHeader className="pb-2">
               <CardDescription className="flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4" />
-                Alerts
+                <TrendingUp className="w-4 h-4" />
+                Monthly Savings
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{unreadAlerts.length}</div>
-              <Button 
-                variant="link" 
-                className="p-0 h-auto text-sm"
-                onClick={() => navigate('/alerts')}
-              >
-                View all alerts
-              </Button>
+              <div className={`text-2xl font-bold ${monthlySavings >= 0 ? 'text-success' : 'text-destructive'}`}>
+                {monthlySavings >= 0 ? '+' : ''}{formatCurrency(monthlySavings)}
+              </div>
+              <div className="text-sm text-muted-foreground">
+                This month
+              </div>
             </CardContent>
           </Card>
         </motion.div>
@@ -249,7 +254,7 @@ export default function DashboardPage() {
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base">Upcoming Bills</CardTitle>
-                <Button variant="ghost" size="sm" onClick={() => navigate('/bills')}>
+                <Button variant="ghost" size="sm" onClick={() => navigate('/payments')}>
                   View all
                 </Button>
               </div>
@@ -301,7 +306,7 @@ export default function DashboardPage() {
                   variant="outline" 
                   size="sm" 
                   className="w-full"
-                  onClick={() => navigate('/checks')}
+                  onClick={() => navigate('/payments')}
                 >
                   Review Checks
                 </Button>
@@ -369,6 +374,11 @@ export default function DashboardPage() {
             )}
           </CardContent>
         </Card>
+      </motion.div>
+
+      {/* Alerts Widget */}
+      <motion.div variants={itemVariants}>
+        <AlertsWidget />
       </motion.div>
 
       {/* Account Summary */}

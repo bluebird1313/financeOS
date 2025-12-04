@@ -3,20 +3,28 @@ import { motion } from 'framer-motion'
 import { 
   User, 
   Bell, 
-  Shield, 
   CreditCard, 
   Database,
   Key,
   Save,
   Trash2,
+  Building2,
+  Plus,
+  TrendingUp,
+  PiggyBank,
+  MoreVertical,
+  Pencil,
+  Users,
 } from 'lucide-react'
 import { useAuthStore } from '@/stores/authStore'
+import { useFinancialStore } from '@/stores/financialStore'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
+import { Badge } from '@/components/ui/badge'
 import {
   Select,
   SelectContent,
@@ -24,11 +32,46 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/components/ui/use-toast'
 
+const ENTITY_TYPES = [
+  { value: 'personal', label: 'Personal', icon: User, color: 'bg-blue-500' },
+  { value: 'business', label: 'Business', icon: Building2, color: 'bg-emerald-500' },
+  { value: 'side_hustle', label: 'Side Hustle', icon: TrendingUp, color: 'bg-purple-500' },
+  { value: 'rental', label: 'Rental Property', icon: Building2, color: 'bg-orange-500' },
+  { value: 'investment', label: 'Investment', icon: PiggyBank, color: 'bg-cyan-500' },
+]
+
+const ENTITY_COLORS = [
+  { value: '#3b82f6', label: 'Blue' },
+  { value: '#10b981', label: 'Emerald' },
+  { value: '#8b5cf6', label: 'Purple' },
+  { value: '#f59e0b', label: 'Amber' },
+  { value: '#ef4444', label: 'Red' },
+  { value: '#06b6d4', label: 'Cyan' },
+  { value: '#ec4899', label: 'Pink' },
+  { value: '#6366f1', label: 'Indigo' },
+]
+
 export default function SettingsPage() {
-  const { profile, preferences, updateProfile, updatePreferences } = useAuthStore()
+  const { user, profile, preferences, updateProfile, updatePreferences } = useAuthStore()
+  const { businesses, accounts, addBusiness } = useFinancialStore()
   const { toast } = useToast()
   
   const [profileForm, setProfileForm] = useState({
@@ -46,6 +89,15 @@ export default function SettingsPage() {
 
   const [apiKeys, setApiKeys] = useState({
     openai_api_key: '',
+  })
+
+  // Entity management state
+  const [showAddEntityDialog, setShowAddEntityDialog] = useState(false)
+  const [entityForm, setEntityForm] = useState({
+    name: '',
+    type: 'business',
+    color: '#3b82f6',
+    taxId: '',
   })
 
   const handleSaveProfile = async () => {
@@ -72,6 +124,34 @@ export default function SettingsPage() {
       description: 'Your preferences have been updated.',
       variant: 'success',
     })
+  }
+
+  const handleAddEntity = async () => {
+    if (!user || !entityForm.name) return
+
+    const business = await addBusiness({
+      user_id: user.id,
+      name: entityForm.name,
+      type: entityForm.type,
+      tax_id: entityForm.taxId || null,
+    })
+
+    if (business) {
+      toast({
+        title: 'Entity created',
+        description: `${entityForm.name} has been added.`,
+      })
+      setShowAddEntityDialog(false)
+      setEntityForm({ name: '', type: 'business', color: '#3b82f6', taxId: '' })
+    }
+  }
+
+  const getEntityType = (type: string | null | undefined) => {
+    return ENTITY_TYPES.find(t => t.value === type) || ENTITY_TYPES[1]
+  }
+
+  const getEntityAccountCount = (businessId: string) => {
+    return accounts.filter(a => a.business_id === businessId).length
   }
 
   const containerVariants = {
@@ -101,10 +181,14 @@ export default function SettingsPage() {
       </div>
 
       <Tabs defaultValue="profile">
-        <TabsList className="grid grid-cols-4 w-full max-w-md">
+        <TabsList className="grid grid-cols-5 w-full max-w-xl">
           <TabsTrigger value="profile">
             <User className="w-4 h-4 mr-2" />
             Profile
+          </TabsTrigger>
+          <TabsTrigger value="entities">
+            <Users className="w-4 h-4 mr-2" />
+            Entities
           </TabsTrigger>
           <TabsTrigger value="alerts">
             <Bell className="w-4 h-4 mr-2" />
@@ -177,6 +261,104 @@ export default function SettingsPage() {
                   <Save className="w-4 h-4 mr-2" />
                   Save Profile
                 </Button>
+              </CardContent>
+            </Card>
+          </motion.div>
+        </TabsContent>
+
+        {/* Entities Tab */}
+        <TabsContent value="entities" className="mt-6">
+          <motion.div variants={itemVariants}>
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Financial Entities</CardTitle>
+                    <CardDescription>
+                      Manage personal, business, and other financial entities
+                    </CardDescription>
+                  </div>
+                  <Button onClick={() => setShowAddEntityDialog(true)}>
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add Entity
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Personal Entity (always exists) */}
+                <div className="flex items-center justify-between p-4 rounded-lg bg-muted/30 border">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-blue-500 flex items-center justify-center">
+                      <User className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                      <p className="font-semibold">Personal</p>
+                      <p className="text-sm text-muted-foreground">
+                        {accounts.filter(a => !a.business_id).length} accounts
+                      </p>
+                    </div>
+                  </div>
+                  <Badge variant="secondary">Default</Badge>
+                </div>
+
+                {/* Business Entities */}
+                {businesses.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Building2 className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                    <p>No business entities yet</p>
+                    <p className="text-sm">Add a business to track finances separately</p>
+                  </div>
+                ) : (
+                  businesses.map(business => {
+                    const typeInfo = getEntityType(business.type)
+                    const Icon = typeInfo.icon
+                    const accountCount = getEntityAccountCount(business.id)
+                    
+                    return (
+                      <div 
+                        key={business.id}
+                        className="flex items-center justify-between p-4 rounded-lg bg-muted/30 border group"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className={`w-10 h-10 rounded-xl ${typeInfo.color} flex items-center justify-center`}>
+                            <Icon className="w-5 h-5 text-white" />
+                          </div>
+                          <div>
+                            <p className="font-semibold">{business.name}</p>
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                              <Badge variant="outline" className="text-xs">{typeInfo.label}</Badge>
+                              <span>{accountCount} accounts</span>
+                              {business.tax_id && <span>• Tax ID: {business.tax_id}</span>}
+                            </div>
+                          </div>
+                        </div>
+                        
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button 
+                              variant="ghost" 
+                              size="icon"
+                              className="opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <MoreVertical className="w-4 h-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem>
+                              <Pencil className="w-4 h-4 mr-2" />
+                              Edit
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem className="text-destructive">
+                              <Trash2 className="w-4 h-4 mr-2" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    )
+                  })
+                )}
               </CardContent>
             </Card>
           </motion.div>
@@ -375,6 +557,91 @@ export default function SettingsPage() {
           </motion.div>
         </TabsContent>
       </Tabs>
+
+      {/* Add Entity Dialog */}
+      <Dialog open={showAddEntityDialog} onOpenChange={setShowAddEntityDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Financial Entity</DialogTitle>
+            <DialogDescription>
+              Create a new entity to track finances separately (e.g., business, rental property).
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="entity-name">Entity Name</Label>
+              <Input
+                id="entity-name"
+                placeholder="e.g., My LLC, Rental Property #1"
+                value={entityForm.name}
+                onChange={e => setEntityForm(prev => ({ ...prev, name: e.target.value }))}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="entity-type">Entity Type</Label>
+              <Select
+                value={entityForm.type}
+                onValueChange={value => setEntityForm(prev => ({ ...prev, type: value }))}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ENTITY_TYPES.filter(t => t.value !== 'personal').map(type => (
+                    <SelectItem key={type.value} value={type.value}>
+                      <div className="flex items-center gap-2">
+                        <type.icon className="w-4 h-4" />
+                        {type.label}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="entity-color">Color</Label>
+              <div className="flex gap-2">
+                {ENTITY_COLORS.map(color => (
+                  <button
+                    key={color.value}
+                    type="button"
+                    onClick={() => setEntityForm(prev => ({ ...prev, color: color.value }))}
+                    className={`w-8 h-8 rounded-full transition-all ${
+                      entityForm.color === color.value
+                        ? 'ring-2 ring-offset-2 ring-offset-background'
+                        : ''
+                    }`}
+                    style={{ backgroundColor: color.value }}
+                    title={color.label}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="entity-taxId">Tax ID / EIN (Optional)</Label>
+              <Input
+                id="entity-taxId"
+                placeholder="XX-XXXXXXX"
+                value={entityForm.taxId}
+                onChange={e => setEntityForm(prev => ({ ...prev, taxId: e.target.value }))}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAddEntityDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleAddEntity} disabled={!entityForm.name}>
+              Create Entity
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </motion.div>
   )
 }

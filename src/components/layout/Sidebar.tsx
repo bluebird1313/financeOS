@@ -4,14 +4,9 @@ import {
   Wallet, 
   ArrowLeftRight, 
   Upload,
-  FileCheck, 
   Receipt, 
-  TrendingUp, 
   Building2, 
-  Users,
   FolderKanban,
-  Bell, 
-  MessageSquare, 
   FileBarChart,
   Settings,
   Sparkles,
@@ -23,36 +18,27 @@ import { Badge } from '@/components/ui/badge'
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { name: 'Entities', href: '/entities', icon: Users },
   { name: 'Accounts', href: '/accounts', icon: Wallet },
   { name: 'Transactions', href: '/transactions', icon: ArrowLeftRight },
   { name: 'Import', href: '/import', icon: Upload },
   { name: 'Projects', href: '/projects', icon: FolderKanban },
-  { name: 'Check Register', href: '/checks', icon: FileCheck },
-  { name: 'Bills & Subs', href: '/bills', icon: Receipt },
-  { name: 'Cash Flow', href: '/cash-flow', icon: TrendingUp },
+  { name: 'Payments', href: '/payments', icon: Receipt },
   { name: 'Business', href: '/business', icon: Building2 },
-  { name: 'Alerts', href: '/alerts', icon: Bell },
-  { name: 'AI Assistant', href: '/assistant', icon: MessageSquare },
   { name: 'Reports', href: '/reports', icon: FileBarChart },
 ]
 
 export default function Sidebar() {
   const location = useLocation()
-  const { alerts, getUnmatchedChecks, getUpcomingBills } = useFinancialStore()
+  const { getUnmatchedChecks, getUpcomingBills } = useFinancialStore()
   
-  const unreadAlerts = alerts.filter(a => !a.is_read).length
   const unmatchedChecks = getUnmatchedChecks().length
   const upcomingBills = getUpcomingBills().length
 
   const getBadgeCount = (href: string) => {
     switch (href) {
-      case '/alerts':
-        return unreadAlerts
-      case '/checks':
-        return unmatchedChecks
-      case '/bills':
-        return upcomingBills
+      case '/payments':
+        // Combined badge for payments (checks + upcoming bills)
+        return unmatchedChecks + upcomingBills
       default:
         return 0
     }
@@ -98,7 +84,7 @@ export default function Sidebar() {
                 <span className="flex-1">{item.name}</span>
                 {badgeCount > 0 && (
                   <Badge 
-                    variant={item.href === '/alerts' ? 'destructive' : 'secondary'}
+                    variant="secondary"
                     className="h-5 min-w-[20px] flex items-center justify-center"
                   >
                     {badgeCount}

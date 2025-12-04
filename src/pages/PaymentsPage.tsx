@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { motion } from 'framer-motion'
+import { useState, useCallback } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { 
   Plus, 
   Receipt, 
@@ -7,8 +7,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock,
-  TrendingUp,
-  TrendingDown,
   MoreVertical,
   Pencil,
   Trash2,
@@ -18,7 +16,9 @@ import {
   Loader2,
   Check,
   X,
-  RefreshCcw,
+  FileCheck,
+  Link2,
+  Search,
 } from 'lucide-react'
 import { useFinancialStore } from '@/stores/financialStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -53,31 +53,47 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/ui/use-toast'
-import type { Bill, RecurringTransaction } from '@/types/database'
+import type { Bill, Check as CheckType, RecurringTransaction } from '@/types/database'
 
-export default function BillsPage() {
+export default function PaymentsPage() {
   const { user } = useAuthStore()
   const { 
     bills, 
+    checks,
     recurringTransactions, 
     transactions,
     accounts,
     categories,
+    businesses,
     addBill,
     updateBill,
     addRecurringTransaction,
+    matchCheckToTransaction,
+    getUnmatchedChecks,
     isLoadingBills,
+    isLoadingChecks,
   } = useFinancialStore()
   const { toast } = useToast()
   
-  const [showAddDialog, setShowAddDialog] = useState(false)
+  // Tab state
+  const [activeTab, setActiveTab] = useState('bills')
+  
+  // Dialog states
+  const [showAddBillDialog, setShowAddBillDialog] = useState(false)
   const [showDetectDialog, setShowDetectDialog] = useState(false)
+  const [showMatchDialog, setShowMatchDialog] = useState(false)
+  const [selectedCheck, setSelectedCheck] = useState<CheckType | null>(null)
   const [isDetecting, setIsDetecting] = useState(false)
   const [detectedSubscriptions, setDetectedSubscriptions] = useState<DetectedSubscription[]>([])
   const [selectedSubscriptions, setSelectedSubscriptions] = useState<Set<number>>(new Set())
   const [detectionSummary, setDetectionSummary] = useState('')
-  const [activeTab, setActiveTab] = useState('bills')
-  const [formData, setFormData] = useState({
+  
+  // Check filter state
+  const [searchQuery, setSearchQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'cleared' | 'void'>('all')
+  
+  // Bill form state
+  const [billForm, setBillForm] = useState({
     name: '',
     amount: '',
     due_date: '',
@@ -89,31 +105,78 @@ export default function BillsPage() {
     category_id: '',
   })
 
+  const unmatchedChecks = getUnmatchedChecks()
+  const subscriptions = recurringTransactions.filter(r => r.is_subscription)
+
+  // Calculate statistics
+  const totalMonthlyBills = bills
+    .filter(b => b.frequency === 'monthly')
+    .reduce((sum, b) => sum + b.amount, 0)
+
+  const upcomingBills = bills.filter(b => {
+    const dueDate = new Date(b.due_date)
+    const now = new Date()
+    const twoWeeksFromNow = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000)
+    return dueDate >= now && dueDate <= twoWeeksFromNow && b.status !== 'paid'
+  })
+
+  const overdueBills = bills.filter(b => {
+    const dueDate = new Date(b.due_date)
+    return dueDate < new Date() && b.status !== 'paid'
+  })
+
+  const totalSubscriptions = subscriptions.reduce((sum, s) => sum + Math.abs(s.amount), 0)
+  const pendingChecksAmount = checks.filter(c => c.status === 'pending').reduce((sum, c) => sum + c.amount, 0)
+
+  // Filter checks
+  const filteredChecks = checks.filter(check => {
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase()
+      if (!check.payee.toLowerCase().includes(query) && 
+          !check.check_number.includes(query)) {
+        return false
+      }
+    }
+    if (statusFilter !== 'all' && check.status !== statusFilter) {
+      return false
+    }
+    return true
+  })
+
+  // Potential matches for selected check
+  const potentialMatches = selectedCheck ? transactions.filter(t => {
+    if (!t.check_number) return false
+    const checkNum = t.check_number.replace(/\D/g, '')
+    const selectedNum = selectedCheck.check_number.replace(/\D/g, '')
+    return checkNum === selectedNum && Math.abs(t.amount) === selectedCheck.amount
+  }) : []
+
+  // Handlers
   const handleAddBill = async () => {
     if (!user) return
     
     const bill = await addBill({
       user_id: user.id,
-      name: formData.name,
-      amount: parseFloat(formData.amount) || 0,
-      due_date: formData.due_date,
-      due_day_of_month: parseInt(formData.due_day_of_month) || null,
-      frequency: formData.frequency,
-      is_autopay: formData.is_autopay,
-      reminder_days_before: parseInt(formData.reminder_days_before) || 3,
-      account_id: formData.account_id || null,
-      category_id: formData.category_id || null,
+      name: billForm.name,
+      amount: parseFloat(billForm.amount) || 0,
+      due_date: billForm.due_date,
+      due_day_of_month: parseInt(billForm.due_day_of_month) || null,
+      frequency: billForm.frequency,
+      is_autopay: billForm.is_autopay,
+      reminder_days_before: parseInt(billForm.reminder_days_before) || 3,
+      account_id: billForm.account_id || null,
+      category_id: billForm.category_id || null,
       status: 'pending',
     })
 
     if (bill) {
       toast({
         title: 'Bill added',
-        description: `${formData.name} has been added to your bills.`,
+        description: `${billForm.name} has been added to your bills.`,
         variant: 'success',
       })
-      setShowAddDialog(false)
-      resetForm()
+      setShowAddBillDialog(false)
+      resetBillForm()
     }
   }
 
@@ -129,18 +192,17 @@ export default function BillsPage() {
     })
   }
 
-  const resetForm = () => {
-    setFormData({
-      name: '',
-      amount: '',
-      due_date: '',
-      due_day_of_month: '',
-      frequency: 'monthly',
-      is_autopay: false,
-      reminder_days_before: '3',
-      account_id: '',
-      category_id: '',
+  const handleMatchCheck = async (transactionId: string) => {
+    if (!selectedCheck) return
+    
+    await matchCheckToTransaction(selectedCheck.id, transactionId)
+    toast({
+      title: 'Check matched',
+      description: 'The check has been matched to the transaction.',
+      variant: 'success',
     })
+    setShowMatchDialog(false)
+    setSelectedCheck(null)
   }
 
   const handleDetectSubscriptions = async () => {
@@ -171,8 +233,6 @@ export default function BillsPage() {
       
       setDetectedSubscriptions(result.subscriptions)
       setDetectionSummary(result.summary)
-      
-      // Pre-select all detected subscriptions
       setSelectedSubscriptions(new Set(result.subscriptions.map((_, i) => i)))
       
       if (result.subscriptions.length === 0) {
@@ -210,7 +270,6 @@ export default function BillsPage() {
     let addedCount = 0
     
     for (const sub of toAdd) {
-      // Check if already exists
       const exists = recurringTransactions.some(
         r => r.name.toLowerCase() === sub.merchant_name.toLowerCase() ||
              r.merchant_name?.toLowerCase() === sub.merchant_name.toLowerCase()
@@ -219,7 +278,7 @@ export default function BillsPage() {
       if (!exists) {
         const result = await addRecurringTransaction({
           user_id: user.id,
-          account_id: accounts[0]?.id || '', // Use first account as default
+          account_id: accounts[0]?.id || '',
           name: sub.merchant_name,
           merchant_name: sub.merchant_name,
           amount: sub.amount,
@@ -247,25 +306,27 @@ export default function BillsPage() {
     setSelectedSubscriptions(new Set())
   }
 
-  // Calculate statistics
-  const totalMonthlyBills = bills
-    .filter(b => b.frequency === 'monthly')
-    .reduce((sum, b) => sum + b.amount, 0)
+  const resetBillForm = () => {
+    setBillForm({
+      name: '',
+      amount: '',
+      due_date: '',
+      due_day_of_month: '',
+      frequency: 'monthly',
+      is_autopay: false,
+      reminder_days_before: '3',
+      account_id: '',
+      category_id: '',
+    })
+  }
 
-  const upcomingBills = bills.filter(b => {
-    const dueDate = new Date(b.due_date)
-    const now = new Date()
-    const twoWeeksFromNow = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000)
-    return dueDate >= now && dueDate <= twoWeeksFromNow && b.status !== 'paid'
-  })
-
-  const overdueBills = bills.filter(b => {
-    const dueDate = new Date(b.due_date)
-    return dueDate < new Date() && b.status !== 'paid'
-  })
-
-  const subscriptions = recurringTransactions.filter(r => r.is_subscription)
-  const totalSubscriptions = subscriptions.reduce((sum, s) => sum + s.amount, 0)
+  const getStatusIcon = (status: CheckType['status']) => {
+    switch (status) {
+      case 'cleared': return <CheckCircle2 className="w-4 h-4 text-success" />
+      case 'pending': return <Clock className="w-4 h-4 text-warning" />
+      case 'void': return <X className="w-4 h-4 text-destructive" />
+    }
+  }
 
   const containerVariants = {
     hidden: { opacity: 0 },
@@ -290,8 +351,8 @@ export default function BillsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="font-display text-3xl font-bold">Bills & Subscriptions</h1>
-          <p className="text-muted-foreground">Track your recurring payments</p>
+          <h1 className="font-display text-3xl font-bold">Payments</h1>
+          <p className="text-muted-foreground">Manage bills, checks, and subscriptions</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={handleDetectSubscriptions} disabled={isDetecting}>
@@ -300,9 +361,9 @@ export default function BillsPage() {
             ) : (
               <Sparkles className="w-4 h-4 mr-2" />
             )}
-            {isDetecting ? 'Detecting...' : 'Detect Subscriptions'}
+            Detect Subscriptions
           </Button>
-          <Button onClick={() => setShowAddDialog(true)}>
+          <Button onClick={() => setShowAddBillDialog(true)}>
             <Plus className="w-4 h-4 mr-2" />
             Add Bill
           </Button>
@@ -324,8 +385,32 @@ export default function BillsPage() {
                     Total overdue: {formatCurrency(overdueBills.reduce((sum, b) => sum + b.amount, 0))}
                   </p>
                 </div>
-                <Button variant="destructive" size="sm">
+                <Button variant="destructive" size="sm" onClick={() => setActiveTab('bills')}>
                   Review Now
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+      )}
+
+      {/* Unmatched Checks Alert */}
+      {unmatchedChecks.length > 0 && (
+        <motion.div variants={itemVariants}>
+          <Card className="border-warning/50 bg-warning/5">
+            <CardContent className="py-4">
+              <div className="flex items-center gap-4">
+                <FileCheck className="w-8 h-8 text-warning" />
+                <div className="flex-1">
+                  <h3 className="font-semibold text-warning">
+                    {unmatchedChecks.length} Unmatched Check{unmatchedChecks.length !== 1 ? 's' : ''}
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    These checks need to be matched with bank transactions.
+                  </p>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => setActiveTab('checks')}>
+                  Review Checks
                 </Button>
               </div>
             </CardContent>
@@ -380,40 +465,51 @@ export default function BillsPage() {
         </motion.div>
 
         <motion.div variants={itemVariants}>
-          <Card className={overdueBills.length > 0 ? 'border-destructive/50' : ''}>
+          <Card>
             <CardHeader className="pb-2">
-              <CardDescription>Overdue</CardDescription>
+              <CardDescription>Pending Checks</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-destructive">
-                {overdueBills.length}
+              <div className="text-2xl font-bold">
+                {formatCurrency(pendingChecksAmount)}
               </div>
               <div className="text-sm text-muted-foreground">
-                Needs attention
+                {checks.filter(c => c.status === 'pending').length} pending
               </div>
             </CardContent>
           </Card>
         </motion.div>
       </div>
 
-      {/* Tabs for Bills and Subscriptions */}
+      {/* Main Tabs */}
       <motion.div variants={itemVariants}>
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList>
-            <TabsTrigger value="bills">
-              <Receipt className="w-4 h-4 mr-2" />
+            <TabsTrigger value="bills" className="flex items-center gap-2">
+              <Receipt className="w-4 h-4" />
               Bills
+              {overdueBills.length > 0 && (
+                <Badge variant="destructive" className="ml-1 h-5">{overdueBills.length}</Badge>
+              )}
             </TabsTrigger>
-            <TabsTrigger value="subscriptions">
-              <CreditCard className="w-4 h-4 mr-2" />
+            <TabsTrigger value="subscriptions" className="flex items-center gap-2">
+              <CreditCard className="w-4 h-4" />
               Subscriptions
             </TabsTrigger>
-            <TabsTrigger value="calendar">
-              <Calendar className="w-4 h-4 mr-2" />
+            <TabsTrigger value="checks" className="flex items-center gap-2">
+              <FileCheck className="w-4 h-4" />
+              Checks
+              {unmatchedChecks.length > 0 && (
+                <Badge variant="warning" className="ml-1 h-5">{unmatchedChecks.length}</Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="calendar" className="flex items-center gap-2">
+              <Calendar className="w-4 h-4" />
               Calendar
             </TabsTrigger>
           </TabsList>
 
+          {/* Bills Tab */}
           <TabsContent value="bills" className="mt-4">
             <Card>
               <CardHeader>
@@ -434,7 +530,7 @@ export default function BillsPage() {
                     <p className="text-muted-foreground mb-4">
                       Add your recurring bills to get reminders and track payments.
                     </p>
-                    <Button onClick={() => setShowAddDialog(true)}>
+                    <Button onClick={() => setShowAddBillDialog(true)}>
                       <Plus className="w-4 h-4 mr-2" />
                       Add Your First Bill
                     </Button>
@@ -536,6 +632,7 @@ export default function BillsPage() {
             </Card>
           </TabsContent>
 
+          {/* Subscriptions Tab */}
           <TabsContent value="subscriptions" className="mt-4">
             <Card>
               <CardHeader>
@@ -558,7 +655,7 @@ export default function BillsPage() {
                       ) : (
                         <Sparkles className="w-4 h-4 mr-2" />
                       )}
-                      {isDetecting ? 'Detecting...' : 'Detect Subscriptions'}
+                      Detect Subscriptions
                     </Button>
                   </div>
                 ) : (
@@ -609,17 +706,7 @@ export default function BillsPage() {
                                 <Pencil className="w-4 h-4 mr-2" />
                                 Edit
                               </DropdownMenuItem>
-                              <DropdownMenuItem 
-                                className="text-destructive"
-                                onClick={async () => {
-                                  const { deleteRecurringTransaction } = useFinancialStore.getState()
-                                  await deleteRecurringTransaction(sub.id)
-                                  toast({
-                                    title: 'Subscription removed',
-                                    description: `${sub.name} has been removed from tracking.`,
-                                  })
-                                }}
-                              >
+                              <DropdownMenuItem className="text-destructive">
                                 <Trash2 className="w-4 h-4 mr-2" />
                                 Remove
                               </DropdownMenuItem>
@@ -634,17 +721,159 @@ export default function BillsPage() {
             </Card>
           </TabsContent>
 
+          {/* Checks Tab */}
+          <TabsContent value="checks" className="mt-4 space-y-4">
+            {/* Filters */}
+            <Card>
+              <CardContent className="py-4">
+                <div className="flex flex-wrap gap-4">
+                  <div className="flex-1 min-w-[200px]">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <Input
+                        placeholder="Search by payee or check number..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="pl-10"
+                      />
+                    </div>
+                  </div>
+                  <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as typeof statusFilter)}>
+                    <SelectTrigger className="w-[150px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Status</SelectItem>
+                      <SelectItem value="pending">Pending</SelectItem>
+                      <SelectItem value="cleared">Cleared</SelectItem>
+                      <SelectItem value="void">Void</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Check Register</CardTitle>
+                <CardDescription>
+                  {checks.length} check{checks.length !== 1 ? 's' : ''} recorded
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {isLoadingChecks ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+                  </div>
+                ) : filteredChecks.length === 0 ? (
+                  <div className="text-center py-12">
+                    <FileCheck className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                    <h3 className="font-semibold mb-2">No checks found</h3>
+                    <p className="text-muted-foreground">
+                      {checks.length === 0 
+                        ? 'Import transactions with check numbers to track them here.'
+                        : 'No checks match your current filters.'
+                      }
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {filteredChecks.map((check) => {
+                      const account = accounts.find(a => a.id === check.account_id)
+                      const category = categories.find(c => c.id === check.category_id)
+                      const business = businesses.find(b => b.id === check.business_id)
+                      
+                      return (
+                        <div 
+                          key={check.id}
+                          className="flex items-center justify-between p-4 rounded-lg hover:bg-accent/50 transition-colors"
+                        >
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-xl bg-secondary flex items-center justify-center">
+                              <FileCheck className="w-6 h-6 text-muted-foreground" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold">#{check.check_number}</span>
+                                <span className="text-muted-foreground">to</span>
+                                <span className="font-medium">{check.payee}</span>
+                                {getStatusIcon(check.status)}
+                              </div>
+                              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                <span>{formatDate(check.date_written)}</span>
+                                {account && (
+                                  <>
+                                    <span>•</span>
+                                    <span>{account.name}</span>
+                                  </>
+                                )}
+                                {category && (
+                                  <>
+                                    <span>•</span>
+                                    <span>{category.name}</span>
+                                  </>
+                                )}
+                                {business && (
+                                  <>
+                                    <span>•</span>
+                                    <Badge variant="secondary" className="text-xs">{business.name}</Badge>
+                                  </>
+                                )}
+                              </div>
+                              {check.memo && (
+                                <div className="text-sm text-muted-foreground mt-1">
+                                  Memo: {check.memo}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-center gap-4">
+                            <div className="text-lg font-semibold">
+                              {formatCurrency(check.amount)}
+                            </div>
+                            {check.status === 'pending' && !check.matched_transaction_id && (
+                              <Button 
+                                variant="outline" 
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedCheck(check)
+                                  setShowMatchDialog(true)
+                                }}
+                              >
+                                <Link2 className="w-4 h-4 mr-2" />
+                                Match
+                              </Button>
+                            )}
+                            <Badge variant={
+                              check.status === 'cleared' ? 'success' :
+                              check.status === 'pending' ? 'warning' : 'destructive'
+                            }>
+                              {check.status}
+                            </Badge>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Calendar Tab */}
           <TabsContent value="calendar" className="mt-4">
             <Card>
               <CardHeader>
-                <CardTitle>Bill Calendar</CardTitle>
+                <CardTitle>Payment Calendar</CardTitle>
                 <CardDescription>
                   Visual overview of upcoming payments
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="text-center py-12 text-muted-foreground">
-                  Calendar view coming soon...
+                  <Calendar className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                  <p>Calendar view coming soon...</p>
                 </div>
               </CardContent>
             </Card>
@@ -653,7 +882,7 @@ export default function BillsPage() {
       </motion.div>
 
       {/* Add Bill Dialog */}
-      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+      <Dialog open={showAddBillDialog} onOpenChange={setShowAddBillDialog}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Add New Bill</DialogTitle>
@@ -668,8 +897,8 @@ export default function BillsPage() {
               <Input
                 id="name"
                 placeholder="e.g., Electric Bill, Rent"
-                value={formData.name}
-                onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+                value={billForm.name}
+                onChange={(e) => setBillForm(prev => ({ ...prev, name: e.target.value }))}
               />
             </div>
             
@@ -681,17 +910,17 @@ export default function BillsPage() {
                   type="number"
                   step="0.01"
                   placeholder="0.00"
-                  value={formData.amount}
-                  onChange={(e) => setFormData(prev => ({ ...prev, amount: e.target.value }))}
+                  value={billForm.amount}
+                  onChange={(e) => setBillForm(prev => ({ ...prev, amount: e.target.value }))}
                 />
               </div>
               
               <div className="space-y-2">
                 <Label htmlFor="frequency">Frequency</Label>
                 <Select
-                  value={formData.frequency}
+                  value={billForm.frequency}
                   onValueChange={(value: Bill['frequency']) => 
-                    setFormData(prev => ({ ...prev, frequency: value }))
+                    setBillForm(prev => ({ ...prev, frequency: value }))
                   }
                 >
                   <SelectTrigger>
@@ -713,8 +942,8 @@ export default function BillsPage() {
                 <Input
                   id="due_date"
                   type="date"
-                  value={formData.due_date}
-                  onChange={(e) => setFormData(prev => ({ ...prev, due_date: e.target.value }))}
+                  value={billForm.due_date}
+                  onChange={(e) => setBillForm(prev => ({ ...prev, due_date: e.target.value }))}
                 />
               </div>
               
@@ -726,8 +955,8 @@ export default function BillsPage() {
                   min="1"
                   max="31"
                   placeholder="e.g., 15"
-                  value={formData.due_day_of_month}
-                  onChange={(e) => setFormData(prev => ({ ...prev, due_day_of_month: e.target.value }))}
+                  value={billForm.due_day_of_month}
+                  onChange={(e) => setBillForm(prev => ({ ...prev, due_day_of_month: e.target.value }))}
                 />
               </div>
             </div>
@@ -741,9 +970,9 @@ export default function BillsPage() {
               </div>
               <Switch
                 id="autopay"
-                checked={formData.is_autopay}
+                checked={billForm.is_autopay}
                 onCheckedChange={(checked) => 
-                  setFormData(prev => ({ ...prev, is_autopay: checked }))
+                  setBillForm(prev => ({ ...prev, is_autopay: checked }))
                 }
               />
             </div>
@@ -751,9 +980,9 @@ export default function BillsPage() {
             <div className="space-y-2">
               <Label htmlFor="reminder">Remind Me</Label>
               <Select
-                value={formData.reminder_days_before}
+                value={billForm.reminder_days_before}
                 onValueChange={(value) => 
-                  setFormData(prev => ({ ...prev, reminder_days_before: value }))
+                  setBillForm(prev => ({ ...prev, reminder_days_before: value }))
                 }
               >
                 <SelectTrigger>
@@ -770,12 +999,12 @@ export default function BillsPage() {
           </div>
           
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowAddDialog(false)}>
+            <Button variant="outline" onClick={() => setShowAddBillDialog(false)}>
               Cancel
             </Button>
             <Button 
               onClick={handleAddBill} 
-              disabled={!formData.name || !formData.amount || !formData.due_date}
+              disabled={!billForm.name || !billForm.amount || !billForm.due_date}
             >
               Add Bill
             </Button>
@@ -858,11 +1087,7 @@ export default function BillsPage() {
                           ? 'border-primary bg-primary text-primary-foreground'
                           : 'border-muted-foreground'
                       }`}>
-                        {alreadyTracked ? (
-                          <Check className="w-4 h-4" />
-                        ) : isSelected ? (
-                          <Check className="w-4 h-4" />
-                        ) : null}
+                        {(alreadyTracked || isSelected) && <Check className="w-4 h-4" />}
                       </div>
                       
                       <div className="flex-1">
@@ -888,9 +1113,6 @@ export default function BillsPage() {
                           <span>•</span>
                           <span>{Math.round(sub.confidence * 100)}% confidence</span>
                         </div>
-                        {sub.notes && (
-                          <p className="text-xs text-muted-foreground mt-1">{sub.notes}</p>
-                        )}
                       </div>
                       
                       <div className="text-right">
@@ -922,10 +1144,60 @@ export default function BillsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Match Check Dialog */}
+      <Dialog open={showMatchDialog} onOpenChange={setShowMatchDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Match Check to Transaction</DialogTitle>
+            <DialogDescription>
+              Select the bank transaction that corresponds to this check.
+            </DialogDescription>
+          </DialogHeader>
+          
+          {selectedCheck && (
+            <div className="py-4">
+              <div className="bg-accent/50 p-4 rounded-lg mb-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-semibold">Check #{selectedCheck.check_number}</div>
+                    <div className="text-sm text-muted-foreground">To: {selectedCheck.payee}</div>
+                  </div>
+                  <div className="text-lg font-bold">{formatCurrency(selectedCheck.amount)}</div>
+                </div>
+              </div>
+              
+              <div className="space-y-2">
+                <Label>Potential Matches</Label>
+                {potentialMatches.length === 0 ? (
+                  <div className="text-center py-4 text-muted-foreground">
+                    No matching transactions found. The check may not have cleared yet.
+                  </div>
+                ) : (
+                  potentialMatches.map(transaction => (
+                    <div 
+                      key={transaction.id}
+                      className="flex items-center justify-between p-3 rounded-lg border hover:bg-accent cursor-pointer"
+                      onClick={() => handleMatchCheck(transaction.id)}
+                    >
+                      <div>
+                        <div className="font-medium">{transaction.name}</div>
+                        <div className="text-sm text-muted-foreground">{formatDate(transaction.date)}</div>
+                      </div>
+                      <div className="font-semibold">{formatCurrency(Math.abs(transaction.amount))}</div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+          
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowMatchDialog(false)}>Cancel</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </motion.div>
   )
 }
-
-
-
 
