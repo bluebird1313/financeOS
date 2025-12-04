@@ -54,27 +54,30 @@ function parseOFXDate(dateStr: string): string | null {
 
 /**
  * Extract text content between OFX tags
- * Handles multiple OFX/QBO format variations
+ * Handles multiple OFX/QBO format variations including:
+ * - Values on same line as tag
+ * - Values on next line after tag (common in Intuit QBO exports)
+ * - Extra whitespace/newlines
  */
 function extractTagValue(content: string, tag: string): string | null {
   // OFX/QBO uses SGML-style tags: <TAG>value (no closing tag usually)
-  // or sometimes <TAG>value</TAG>
-  // Some banks include extra whitespace or newlines
+  // Some banks (like Buckholts State Bank) put value on same line
+  // The key insight: value ends at the next < character
+  
   const patterns = [
-    // Standard OFX format with closing tag
-    new RegExp(`<${tag}>([^<]+)</${tag}>`, 'i'),
-    // OFX format without closing tag (most common)
+    // Value immediately after tag, ends at next tag or newline
     new RegExp(`<${tag}>([^<\\n\\r]+)`, 'i'),
-    // Format with newline after value
-    new RegExp(`<${tag}>\\s*([^\\n\\r<]+)`, 'i'),
-    // Some QBO files have whitespace before value
-    new RegExp(`<${tag}>\\s+([^<]+?)\\s*(?:<|$)`, 'i'),
+    // Value after tag with possible whitespace, capture until next <
+    new RegExp(`<${tag}>\\s*([^<]+?)\\s*<`, 'i'),
+    // Standard OFX format with closing tag
+    new RegExp(`<${tag}>([^<]*)</${tag}>`, 'i'),
   ]
   
   for (const pattern of patterns) {
     const match = content.match(pattern)
     if (match && match[1]) {
-      const value = match[1].trim()
+      // Clean up the value - remove extra whitespace and newlines
+      const value = match[1].replace(/[\r\n]+/g, ' ').trim()
       if (value) return value
     }
   }
@@ -89,56 +92,56 @@ function extractTagValue(content: string, tag: string): string | null {
 function extractTransactions(content: string): OFXTransaction[] {
   const transactions: OFXTransaction[] = []
   
-  // Normalize content - remove Windows line endings and extra whitespace
-  const normalizedContent = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  // Normalize content - collapse multiple newlines into single, remove carriage returns
+  let normalizedContent = content
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
   
-  // Find all STMTTRN blocks - try multiple patterns for different bank formats
-  const patterns = [
-    // Standard OFX with closing tag
-    /<STMTTRN>([\s\S]*?)<\/STMTTRN>/gi,
-    // OFX without closing tag (terminated by next STMTTRN or end of list)
-    /<STMTTRN>([\s\S]*?)(?=<STMTTRN>|<\/BANKTRANLIST>|<\/CCSTMTRS>|<\/STMTTRNRS>|$)/gi,
-  ]
+  // Find the BANKTRANLIST section first (contains all transactions)
+  const tranListMatch = normalizedContent.match(/<BANKTRANLIST>([\s\S]*?)(?:<\/BANKTRANLIST>|<\/STMTRS>|$)/i)
+  if (tranListMatch) {
+    normalizedContent = tranListMatch[1]
+  }
   
-  let foundTransactions = false
+  // Split by <STMTTRN> tags to get individual transaction blocks
+  // This is more reliable than regex for files with lots of whitespace
+  const parts = normalizedContent.split(/<STMTTRN>/i)
   
-  for (const pattern of patterns) {
-    if (foundTransactions) break
+  for (let i = 1; i < parts.length; i++) { // Start at 1 to skip content before first STMTTRN
+    let block = parts[i]
     
-    let match
-    pattern.lastIndex = 0 // Reset regex state
+    // Trim the block at the closing tag or next section
+    const endMatch = block.match(/<\/STMTTRN>|<\/BANKTRANLIST>/i)
+    if (endMatch && endMatch.index !== undefined) {
+      block = block.substring(0, endMatch.index)
+    }
     
-    while ((match = pattern.exec(normalizedContent)) !== null) {
-      foundTransactions = true
-      const block = match[1]
-      
-      // Extract NAME - some banks use PAYEE instead
-      let name = extractTagValue(block, 'NAME')
-      if (!name) {
-        // Try PAYEE tag (used by some Intuit QBO exports)
-        name = extractTagValue(block, 'PAYEE')
-      }
-      if (!name) {
-        // Some banks put description in MEMO only
-        name = extractTagValue(block, 'MEMO')
-      }
-      
-      const transaction: OFXTransaction = {
-        TRNTYPE: extractTagValue(block, 'TRNTYPE') || undefined,
-        DTPOSTED: extractTagValue(block, 'DTPOSTED') || undefined,
-        DTUSER: extractTagValue(block, 'DTUSER') || undefined,
-        TRNAMT: extractTagValue(block, 'TRNAMT') || undefined,
-        FITID: extractTagValue(block, 'FITID') || undefined,
-        NAME: name || undefined,
-        MEMO: extractTagValue(block, 'MEMO') || undefined,
-        CHECKNUM: extractTagValue(block, 'CHECKNUM') || extractTagValue(block, 'CHKNUM') || undefined,
-        REFNUM: extractTagValue(block, 'REFNUM') || undefined,
-      }
-      
-      // Only add if we have meaningful data (at least a date or amount)
-      if (transaction.DTPOSTED || transaction.TRNAMT || transaction.NAME) {
-        transactions.push(transaction)
-      }
+    // Extract NAME - some banks use PAYEE instead
+    let name = extractTagValue(block, 'NAME')
+    if (!name) {
+      // Try PAYEE tag (used by some Intuit QBO exports)
+      name = extractTagValue(block, 'PAYEE')
+    }
+    if (!name) {
+      // Some banks put description in MEMO only
+      name = extractTagValue(block, 'MEMO')
+    }
+    
+    const transaction: OFXTransaction = {
+      TRNTYPE: extractTagValue(block, 'TRNTYPE') || undefined,
+      DTPOSTED: extractTagValue(block, 'DTPOSTED') || undefined,
+      DTUSER: extractTagValue(block, 'DTUSER') || undefined,
+      TRNAMT: extractTagValue(block, 'TRNAMT') || undefined,
+      FITID: extractTagValue(block, 'FITID') || undefined,
+      NAME: name || undefined,
+      MEMO: extractTagValue(block, 'MEMO') || undefined,
+      CHECKNUM: extractTagValue(block, 'CHECKNUM') || extractTagValue(block, 'CHKNUM') || undefined,
+      REFNUM: extractTagValue(block, 'REFNUM') || undefined,
+    }
+    
+    // Only add if we have meaningful data (at least a date or amount)
+    if (transaction.DTPOSTED || transaction.TRNAMT || transaction.NAME) {
+      transactions.push(transaction)
     }
   }
   
