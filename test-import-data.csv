@@ -1,0 +1,12 @@
+Date,Description,Amount,Category,Account
+2024-01-15,Grocery Store Purchase,-125.50,Groceries,Checking
+2024-01-16,Direct Deposit Paycheck,3500.00,Income,Checking
+2024-01-17,Electric Bill Payment,-145.75,Utilities,Checking
+2024-01-18,Gas Station,-45.00,Transportation,Checking
+2024-01-19,Restaurant Dinner,-78.25,Dining,Checking
+2024-01-20,Amazon Purchase,-199.99,Shopping,Credit Card
+2024-01-21,Spotify Subscription,-9.99,Entertainment,Credit Card
+2024-01-22,Transfer to Savings,-500.00,Transfer,Checking
+2024-01-23,Interest Payment,2.50,Interest,Savings
+2024-01-24,Insurance Premium,-250.00,Insurance,Checking
+

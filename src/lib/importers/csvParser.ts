@@ -1,6 +1,6 @@
 // CSV Parser with Smart Column Detection
 
-import type { ParseResult, ParsedTransaction, DetectedFormat, ColumnMapping, ParseError } from './types'
+import type { ParseResult, ParsedTransaction, DetectedFormat, ColumnMapping, ParseError, DetectedAccount } from './types'
 
 // Common date formats to try
 const DATE_FORMATS = [
@@ -311,6 +311,79 @@ export function detectColumnMappings(headers: string[], sampleRows: string[][]):
 }
 
 /**
+ * Detect account info from CSV content or filename
+ * Looks for account numbers in headers, first rows, or patterns in data
+ */
+export function detectAccountFromCSV(text: string, filename?: string): DetectedAccount | undefined {
+  // Common patterns for account numbers (last 4 digits are most common)
+  const accountPatterns = [
+    /account[:\s#]*[x*]*(\d{4})/i,          // "Account: ****1234" or "Account #1234"
+    /acct[:\s#]*[x*]*(\d{4})/i,             // "Acct: 1234"
+    /[x*]{4,}(\d{4})/,                       // "****1234" or "xxxx1234"
+    /ending\s+(?:in\s+)?(\d{4})/i,          // "ending in 1234"
+    /(?:card|account)\s+(\d{4})/i,          // "card 1234"
+  ]
+  
+  // Check filename first
+  if (filename) {
+    for (const pattern of accountPatterns) {
+      const match = filename.match(pattern)
+      if (match) {
+        return { mask: match[1] }
+      }
+    }
+    
+    // Also check for just 4 digits in filename
+    const simpleMatch = filename.match(/(\d{4})/)
+    if (simpleMatch) {
+      return { mask: simpleMatch[1] }
+    }
+  }
+  
+  // Check first few lines of file for account info
+  const firstLines = text.split('\n').slice(0, 10).join(' ')
+  
+  for (const pattern of accountPatterns) {
+    const match = firstLines.match(pattern)
+    if (match) {
+      return { mask: match[1] }
+    }
+  }
+  
+  // Try to detect account type from content
+  let accountType: DetectedAccount['accountType'] | undefined
+  const upperContent = firstLines.toUpperCase()
+  
+  if (upperContent.includes('CREDIT CARD') || upperContent.includes('CREDITCARD')) {
+    accountType = 'credit'
+  } else if (upperContent.includes('CHECKING')) {
+    accountType = 'checking'
+  } else if (upperContent.includes('SAVINGS')) {
+    accountType = 'savings'
+  }
+  
+  // Try to detect institution name
+  let institutionName: string | undefined
+  const bankPatterns = [
+    /(?:^|\s)(chase|wells\s*fargo|bank\s*of\s*america|citi|capital\s*one|discover|amex|american\s*express|usaa|navy\s*federal|pnc|td\s*bank|us\s*bank|fifth\s*third|huntington|regions|bb&t|suntrust|truist)/i,
+  ]
+  
+  for (const pattern of bankPatterns) {
+    const match = firstLines.match(pattern)
+    if (match) {
+      institutionName = match[1].trim()
+      break
+    }
+  }
+  
+  if (accountType || institutionName) {
+    return { accountType, institutionName }
+  }
+  
+  return undefined
+}
+
+/**
  * Parse CSV file with optional column mapping
  */
 export function parseCSV(
@@ -320,6 +393,7 @@ export function parseCSV(
     hasHeaderRow?: boolean
     skipRows?: number
     amountIsNegativeForDebits?: boolean
+    filename?: string
   }
 ): ParseResult {
   const errors: ParseError[] = []
@@ -452,12 +526,19 @@ export function parseCSV(
       })
     }
     
+    // Detect account info
+    const detectedAccount = detectAccountFromCSV(text, options?.filename)
+    if (detectedAccount?.mask) {
+      warnings.push(`Detected account ending in ...${detectedAccount.mask}`)
+    }
+    
     return {
       success: true,
       transactions,
       headers,
       fileType: 'csv',
       detectedFormat,
+      detectedAccount,
       errors,
       warnings,
     }
@@ -475,4 +556,6 @@ export function parseCSV(
     }
   }
 }
+
+
 

@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { 
   Plus, 
@@ -11,6 +12,10 @@ import {
   Loader2,
   DollarSign,
   Receipt,
+  ArrowUpRight,
+  ArrowDownRight,
+  X,
+  ExternalLink,
 } from 'lucide-react'
 import { useFinancialStore } from '@/stores/financialStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -34,7 +39,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { formatCurrency } from '@/lib/utils'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { formatCurrency, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/ui/use-toast'
 import type { Project } from '@/types/database'
 
@@ -57,6 +63,7 @@ const PROJECT_COLORS = [
 ]
 
 export default function ProjectsPage() {
+  const navigate = useNavigate()
   const { user } = useAuthStore()
   const { 
     projects, 
@@ -72,6 +79,7 @@ export default function ProjectsPage() {
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [editingProject, setEditingProject] = useState<Project | null>(null)
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null)
+  const [viewingProjectTransactions, setViewingProjectTransactions] = useState<Project | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [activeTab, setActiveTab] = useState<'active' | 'archived'>('active')
@@ -79,6 +87,21 @@ export default function ProjectsPage() {
     name: '',
     color: '#6366f1',
   })
+
+  // Get transactions for the project being viewed
+  const projectTransactions = useMemo(() => {
+    if (!viewingProjectTransactions) return []
+    return transactions.filter(t => t.project_id === viewingProjectTransactions.id).sort((a, b) => 
+      new Date(b.date).getTime() - new Date(a.date).getTime()
+    )
+  }, [transactions, viewingProjectTransactions])
+
+  // Calculate stats for the project being viewed  
+  const viewingProjectStats = useMemo(() => {
+    const income = projectTransactions.filter(t => t.amount > 0).reduce((sum, t) => sum + t.amount, 0)
+    const expenses = projectTransactions.filter(t => t.amount < 0).reduce((sum, t) => sum + Math.abs(t.amount), 0)
+    return { income, expenses, net: income - expenses, count: projectTransactions.length }
+  }, [projectTransactions])
 
   useEffect(() => {
     if (user) {
@@ -229,7 +252,10 @@ export default function ProjectsPage() {
     
     return (
       <motion.div key={project.id} variants={itemVariants}>
-        <Card className="hover:border-primary/30 transition-colors">
+        <Card 
+          className="hover:border-primary/30 transition-colors cursor-pointer"
+          onClick={() => setViewingProjectTransactions(project)}
+        >
           <CardContent className="p-4">
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-3">
@@ -257,7 +283,7 @@ export default function ProjectsPage() {
               
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon">
+                  <Button variant="ghost" size="icon" onClick={(e) => e.stopPropagation()}>
                     <MoreVertical className="w-4 h-4" />
                   </Button>
                 </DropdownMenuTrigger>
@@ -572,6 +598,107 @@ export default function ProjectsPage() {
               ) : (
                 'Delete Project'
               )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Project Transactions Dialog */}
+      <Dialog 
+        open={!!viewingProjectTransactions} 
+        onOpenChange={(open) => !open && setViewingProjectTransactions(null)}
+      >
+        <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-3">
+              {viewingProjectTransactions && (
+                <>
+                  <div 
+                    className="w-10 h-10 rounded-lg flex items-center justify-center"
+                    style={{ backgroundColor: `${viewingProjectTransactions.color}20` }}
+                  >
+                    <FolderKanban 
+                      className="w-5 h-5" 
+                      style={{ color: viewingProjectTransactions.color }}
+                    />
+                  </div>
+                  {viewingProjectTransactions.name} Transactions
+                </>
+              )}
+            </DialogTitle>
+            <DialogDescription>
+              {viewingProjectStats.count} transaction{viewingProjectStats.count !== 1 ? 's' : ''} found
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Summary Stats */}
+          <div className="grid grid-cols-3 gap-4 py-4 border-b">
+            <div className="text-center">
+              <p className="text-sm text-muted-foreground">Income</p>
+              <p className="text-xl font-bold text-emerald-500">+{formatCurrency(viewingProjectStats.income)}</p>
+            </div>
+            <div className="text-center">
+              <p className="text-sm text-muted-foreground">Expenses</p>
+              <p className="text-xl font-bold text-red-500">-{formatCurrency(viewingProjectStats.expenses)}</p>
+            </div>
+            <div className="text-center">
+              <p className="text-sm text-muted-foreground">Net</p>
+              <p className={`text-xl font-bold ${viewingProjectStats.net >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                {viewingProjectStats.net >= 0 ? '+' : ''}{formatCurrency(viewingProjectStats.net)}
+              </p>
+            </div>
+          </div>
+
+          {/* Transactions List */}
+          <ScrollArea className="flex-1 -mx-6 px-6">
+            {projectTransactions.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <Receipt className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                <p>No transactions for this project</p>
+              </div>
+            ) : (
+              <div className="space-y-2 py-4">
+                {projectTransactions.map((txn) => (
+                  <div
+                    key={txn.id}
+                    className="flex items-center justify-between p-3 rounded-lg hover:bg-accent/50 transition-colors cursor-pointer group"
+                    onClick={() => {
+                      setViewingProjectTransactions(null)
+                      navigate(`/transactions/${txn.id}`)
+                    }}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-9 h-9 rounded-full flex items-center justify-center ${
+                        txn.amount > 0 
+                          ? 'bg-emerald-500/10 text-emerald-500' 
+                          : 'bg-muted text-muted-foreground'
+                      }`}>
+                        {txn.amount > 0 
+                          ? <ArrowDownRight className="w-4 h-4" />
+                          : <ArrowUpRight className="w-4 h-4" />
+                        }
+                      </div>
+                      <div>
+                        <p className="font-medium">{txn.merchant_name || txn.name}</p>
+                        <p className="text-sm text-muted-foreground">{formatDate(txn.date)}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className={`font-semibold ${txn.amount > 0 ? 'text-emerald-500' : ''}`}>
+                        {txn.amount > 0 ? '+' : ''}{formatCurrency(txn.amount)}
+                      </span>
+                      <ExternalLink className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </ScrollArea>
+
+          <DialogFooter className="border-t pt-4">
+            <Button variant="outline" onClick={() => setViewingProjectTransactions(null)}>
+              <X className="w-4 h-4 mr-2" />
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

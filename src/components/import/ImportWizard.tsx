@@ -60,6 +60,7 @@ import {
   type ParsedTransaction,
   type ColumnMapping,
   type DetectedFormat,
+  type DetectedAccount,
 } from '@/lib/importers'
 import { suggestColumnMappings, batchCategorizeTransactions } from '@/lib/openai'
 
@@ -98,6 +99,8 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
   const [fileType, setFileType] = useState<string>('')
   const [parseResult, setParseResult] = useState<ParseResult | null>(null)
   const [detectedFormat, setDetectedFormat] = useState<DetectedFormat | null>(null)
+  const [detectedAccount, setDetectedAccount] = useState<DetectedAccount | null>(null)
+  const [showCreateAccountPrompt, setShowCreateAccountPrompt] = useState(false)
 
   // Preview state
   const [previewHeaders, setPreviewHeaders] = useState<string[]>([])
@@ -137,6 +140,37 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
     }
     return null
   }, [selectedAccountId, accounts, businesses])
+
+  // Find account by mask (last 4 digits)
+  const findAccountByMask = useCallback((mask: string | undefined) => {
+    if (!mask) return null
+    return accounts.find(a => a.mask === mask)
+  }, [accounts])
+
+  // Auto-select account based on detected account info
+  const handleDetectedAccount = useCallback((detected: DetectedAccount | undefined) => {
+    if (!detected) {
+      setDetectedAccount(null)
+      return
+    }
+    
+    setDetectedAccount(detected)
+    
+    // Try to match by mask
+    if (detected.mask) {
+      const matchedAccount = findAccountByMask(detected.mask)
+      if (matchedAccount) {
+        setSelectedAccountId(matchedAccount.id)
+        toast({
+          title: 'Account matched!',
+          description: `Matched to "${matchedAccount.name}" (****${detected.mask})`,
+        })
+      } else {
+        // No match - show prompt to create
+        setShowCreateAccountPrompt(true)
+      }
+    }
+  }, [findAccountByMask, toast])
 
   // Load profile settings when a profile is selected
   const handleProfileSelect = useCallback((profileId: string) => {
@@ -196,6 +230,8 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
     setFileType('')
     setParseResult(null)
     setDetectedFormat(null)
+    setDetectedAccount(null)
+    setShowCreateAccountPrompt(false)
     setPreviewHeaders([])
     setPreviewRows([])
     setColumnMappings({})
@@ -240,6 +276,11 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
         // Parse directly and go to preview
         const result = await parseFile(selectedFile)
         setParseResult(result)
+        
+        // Handle detected account from file
+        if (result.detectedAccount) {
+          handleDetectedAccount(result.detectedAccount)
+        }
         
         if (result.success && result.transactions.length > 0) {
           // Stage transactions
@@ -334,9 +375,15 @@ export default function ImportWizard({ open, onOpenChange, onComplete }: ImportW
       const result = await parseFile(file, mapping, {
         hasHeaderRow,
         amountIsNegativeForDebits,
+        filename: file.name,
       })
       
       setParseResult(result)
+      
+      // Handle detected account from file
+      if (result.detectedAccount) {
+        handleDetectedAccount(result.detectedAccount)
+      }
       
       if (result.success && result.transactions.length > 0) {
         // Stage transactions with category suggestions

@@ -168,3 +168,5 @@ The app integrates OpenAI for several features:
 MIT License
 
 
+
+

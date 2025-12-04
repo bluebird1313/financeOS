@@ -234,3 +234,5 @@ AFTER INSERT ON transactions
 FOR EACH ROW
 EXECUTE FUNCTION create_transaction_hash();
 
+
+

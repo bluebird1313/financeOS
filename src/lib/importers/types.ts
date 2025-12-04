@@ -12,12 +12,21 @@ export interface ParsedTransaction {
   rowNumber: number
 }
 
+export interface DetectedAccount {
+  accountId?: string        // Full account ID if available
+  mask?: string             // Last 4 digits
+  accountType?: 'checking' | 'savings' | 'credit' | 'loan' | 'investment' | 'other'
+  bankId?: string           // Bank routing number if available
+  institutionName?: string  // Detected institution name
+}
+
 export interface ParseResult {
   success: boolean
   transactions: ParsedTransaction[]
   headers?: string[]
   fileType: 'csv' | 'xlsx' | 'xls' | 'qbo' | 'qfx' | 'ofx'
   detectedFormat?: DetectedFormat
+  detectedAccount?: DetectedAccount  // Account info detected from file
   errors: ParseError[]
   warnings: string[]
 }
@@ -138,4 +147,6 @@ export interface AICategorizationResult {
     merchant: MerchantCleanup | null
   }>
 }
+
+
 

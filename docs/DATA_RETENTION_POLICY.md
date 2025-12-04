@@ -214,3 +214,5 @@ Response time: Within 48 hours
 
 *This policy demonstrates our commitment to protecting user privacy and handling financial data responsibly in compliance with all applicable regulations.*
 
+
+

@@ -1,7 +1,7 @@
 // OFX/QBO/QFX Parser
 // These formats follow the OFX (Open Financial Exchange) standard
 
-import type { ParseResult, ParsedTransaction, ParseError } from './types'
+import type { ParseResult, ParsedTransaction, ParseError, DetectedAccount } from './types'
 
 interface OFXTransaction {
   TRNTYPE?: string
@@ -138,6 +138,32 @@ function extractAccountInfo(content: string): OFXAccount | null {
 }
 
 /**
+ * Convert OFX account type to our account type
+ */
+function mapOFXAccountType(ofxType: string | undefined): 'checking' | 'savings' | 'credit' | 'loan' | 'investment' | 'other' {
+  if (!ofxType) return 'other'
+  
+  const type = ofxType.toUpperCase()
+  
+  switch (type) {
+    case 'CHECKING':
+      return 'checking'
+    case 'SAVINGS':
+      return 'savings'
+    case 'CREDITCARD':
+    case 'CREDITLINE':
+      return 'credit'
+    case 'MONEYMRKT':
+    case 'CD':
+      return 'savings'
+    case 'INVESTMENT':
+      return 'investment'
+    default:
+      return 'other'
+  }
+}
+
+/**
  * Convert OFX transaction type to our type
  */
 function mapTransactionType(ofxType: string | undefined): 'debit' | 'credit' | 'check' | 'transfer' {
@@ -242,12 +268,21 @@ export function parseOFX(content: string): ParseResult {
       }
     })
     
+    // Build detected account info
+    const detectedAccount: DetectedAccount | undefined = accountInfo ? {
+      accountId: accountInfo.ACCTID,
+      mask: accountInfo.ACCTID?.slice(-4),
+      accountType: mapOFXAccountType(accountInfo.ACCTTYPE),
+      bankId: accountInfo.BANKID,
+    } : undefined
+    
     return {
       success: true,
       transactions,
       fileType,
       errors,
       warnings,
+      detectedAccount,
       detectedFormat: {
         hasHeaderRow: false, // OFX doesn't have headers like CSV
         amountStyle: 'single',
@@ -287,4 +322,6 @@ export function isOFXFormat(content: string): boolean {
   const upperContent = content.toUpperCase()
   return markers.some(marker => upperContent.includes(marker))
 }
+
+
 

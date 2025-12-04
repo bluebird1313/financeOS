@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
   Building2,
@@ -16,6 +17,10 @@ import {
   ArrowRight,
   RefreshCcw,
   Receipt,
+  ArrowUpRight,
+  ArrowDownRight,
+  X,
+  ExternalLink,
 } from 'lucide-react'
 import { useFinancialStore } from '@/stores/financialStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -50,7 +55,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useToast } from '@/components/ui/use-toast'
-import { formatCurrency } from '@/lib/utils'
+import { formatCurrency, formatDate } from '@/lib/utils'
 import type { Business, Account, Transaction, RecurringTransaction } from '@/types/database'
 
 const ENTITY_TYPES = [
@@ -83,6 +88,7 @@ interface EntitySummary {
 }
 
 export default function EntitiesPage() {
+  const navigate = useNavigate()
   const { user } = useAuthStore()
   const {
     businesses,
@@ -96,12 +102,33 @@ export default function EntitiesPage() {
 
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [selectedEntity, setSelectedEntity] = useState<Business | null | 'all'>('all')
+  const [viewingEntityTransactions, setViewingEntityTransactions] = useState<Business | null | 'personal' | null>(null)
   const [formData, setFormData] = useState({
     name: '',
     type: 'business',
     color: '#3b82f6',
     taxId: '',
   })
+
+  // Get transactions for the entity being viewed
+  const entityTransactions = useMemo(() => {
+    if (viewingEntityTransactions === null) return []
+    if (viewingEntityTransactions === 'personal') {
+      return transactions.filter(t => !t.business_id).sort((a, b) => 
+        new Date(b.date).getTime() - new Date(a.date).getTime()
+      )
+    }
+    return transactions.filter(t => t.business_id === viewingEntityTransactions.id).sort((a, b) => 
+      new Date(b.date).getTime() - new Date(a.date).getTime()
+    )
+  }, [transactions, viewingEntityTransactions])
+
+  // Calculate stats for the entity being viewed
+  const entityStats = useMemo(() => {
+    const income = entityTransactions.filter(t => t.amount > 0).reduce((sum, t) => sum + t.amount, 0)
+    const expenses = entityTransactions.filter(t => t.amount < 0).reduce((sum, t) => sum + Math.abs(t.amount), 0)
+    return { income, expenses, net: income - expenses }
+  }, [entityTransactions])
 
   // Compute entity summaries
   const entitySummaries = useMemo((): EntitySummary[] => {
@@ -328,7 +355,10 @@ export default function EntitiesPage() {
 
             return (
               <motion.div key={summary.entity?.id || 'personal'} variants={itemVariants}>
-                <Card className="h-full">
+                <Card 
+                  className="h-full cursor-pointer hover:border-primary/50 transition-colors"
+                  onClick={() => setViewingEntityTransactions(summary.entity || 'personal')}
+                >
                   <CardHeader className="pb-3">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
@@ -353,7 +383,7 @@ export default function EntitiesPage() {
                       {summary.entity && (
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon">
+                            <Button variant="ghost" size="icon" onClick={(e) => e.stopPropagation()}>
                               <MoreVertical className="w-4 h-4" />
                             </Button>
                           </DropdownMenuTrigger>
@@ -611,6 +641,113 @@ export default function EntitiesPage() {
             </Button>
             <Button onClick={handleAddEntity} disabled={!formData.name}>
               Create Entity
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Entity Transactions Dialog */}
+      <Dialog 
+        open={viewingEntityTransactions !== null} 
+        onOpenChange={(open) => !open && setViewingEntityTransactions(null)}
+      >
+        <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-3">
+              {viewingEntityTransactions === 'personal' ? (
+                <>
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-blue-500">
+                    <User className="w-5 h-5 text-white" />
+                  </div>
+                  Personal Transactions
+                </>
+              ) : viewingEntityTransactions ? (
+                <>
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                    getEntityType(viewingEntityTransactions.type).color
+                  }`}>
+                    {(() => {
+                      const TypeIcon = getEntityType(viewingEntityTransactions.type).icon
+                      return <TypeIcon className="w-5 h-5 text-white" />
+                    })()}
+                  </div>
+                  {viewingEntityTransactions.name} Transactions
+                </>
+              ) : null}
+            </DialogTitle>
+            <DialogDescription>
+              {entityTransactions.length} transaction{entityTransactions.length !== 1 ? 's' : ''} found
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Summary Stats */}
+          <div className="grid grid-cols-3 gap-4 py-4 border-b">
+            <div className="text-center">
+              <p className="text-sm text-muted-foreground">Income</p>
+              <p className="text-xl font-bold text-emerald-500">+{formatCurrency(entityStats.income)}</p>
+            </div>
+            <div className="text-center">
+              <p className="text-sm text-muted-foreground">Expenses</p>
+              <p className="text-xl font-bold text-red-500">-{formatCurrency(entityStats.expenses)}</p>
+            </div>
+            <div className="text-center">
+              <p className="text-sm text-muted-foreground">Net</p>
+              <p className={`text-xl font-bold ${entityStats.net >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                {entityStats.net >= 0 ? '+' : ''}{formatCurrency(entityStats.net)}
+              </p>
+            </div>
+          </div>
+
+          {/* Transactions List */}
+          <ScrollArea className="flex-1 -mx-6 px-6">
+            {entityTransactions.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <Receipt className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                <p>No transactions for this entity</p>
+              </div>
+            ) : (
+              <div className="space-y-2 py-4">
+                {entityTransactions.map((txn) => (
+                  <div
+                    key={txn.id}
+                    className="flex items-center justify-between p-3 rounded-lg hover:bg-accent/50 transition-colors cursor-pointer group"
+                    onClick={() => {
+                      setViewingEntityTransactions(null)
+                      navigate(`/transactions/${txn.id}`)
+                    }}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-9 h-9 rounded-full flex items-center justify-center ${
+                        txn.amount > 0 
+                          ? 'bg-emerald-500/10 text-emerald-500' 
+                          : 'bg-muted text-muted-foreground'
+                      }`}>
+                        {txn.amount > 0 
+                          ? <ArrowDownRight className="w-4 h-4" />
+                          : <ArrowUpRight className="w-4 h-4" />
+                        }
+                      </div>
+                      <div>
+                        <p className="font-medium">{txn.merchant_name || txn.name}</p>
+                        <p className="text-sm text-muted-foreground">{formatDate(txn.date)}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className={`font-semibold ${txn.amount > 0 ? 'text-emerald-500' : ''}`}>
+                        {txn.amount > 0 ? '+' : ''}{formatCurrency(txn.amount)}
+                      </span>
+                      <ExternalLink className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </ScrollArea>
+
+          <DialogFooter className="border-t pt-4">
+            <Button variant="outline" onClick={() => setViewingEntityTransactions(null)}>
+              <X className="w-4 h-4 mr-2" />
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

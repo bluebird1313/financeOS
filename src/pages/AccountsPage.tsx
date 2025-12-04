@@ -80,6 +80,7 @@ export default function AccountsPage() {
     type: 'checking' as Account['type'],
     current_balance: '',
     institution_name: '',
+    mask: '', // Last 4 digits for import matching
     business_id: '',
   })
 
@@ -92,6 +93,7 @@ export default function AccountsPage() {
       type: formData.type,
       current_balance: parseFloat(formData.current_balance) || 0,
       institution_name: formData.institution_name || null,
+      mask: formData.mask || null, // Last 4 digits for import matching
       business_id: formData.business_id || null,
       is_manual: true,
       currency: 'USD',
@@ -114,6 +116,7 @@ export default function AccountsPage() {
       type: 'checking',
       current_balance: '',
       institution_name: '',
+      mask: '',
       business_id: '',
     })
   }
@@ -250,7 +253,7 @@ export default function AccountsPage() {
           <CardHeader>
             <CardTitle>All Accounts</CardTitle>
             <CardDescription>
-              {accounts.length} account{accounts.length !== 1 ? 's' : ''} connected
+              {accounts.length} account{accounts.length !== 1 ? 's' : ''} tracked
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -263,7 +266,7 @@ export default function AccountsPage() {
                 <Wallet className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
                 <h3 className="font-semibold mb-2">No accounts yet</h3>
                 <p className="text-muted-foreground mb-4">
-                  Connect a bank account or add one manually to get started.
+                  Add your bank accounts to organize transactions by account.
                 </p>
                 <Button onClick={() => setShowAddDialog(true)}>
                   <Plus className="w-4 h-4 mr-2" />
@@ -429,14 +432,33 @@ export default function AccountsPage() {
               />
             </div>
             
-            <div className="space-y-2">
-              <Label htmlFor="institution">Institution Name (Optional)</Label>
-              <Input
-                id="institution"
-                placeholder="e.g., Chase, Wells Fargo"
-                value={formData.institution_name}
-                onChange={(e) => setFormData(prev => ({ ...prev, institution_name: e.target.value }))}
-              />
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="institution">Institution Name</Label>
+                <Input
+                  id="institution"
+                  placeholder="e.g., Chase, Wells Fargo"
+                  value={formData.institution_name}
+                  onChange={(e) => setFormData(prev => ({ ...prev, institution_name: e.target.value }))}
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="mask">Last 4 Digits</Label>
+                <Input
+                  id="mask"
+                  placeholder="e.g., 1234"
+                  maxLength={4}
+                  value={formData.mask}
+                  onChange={(e) => {
+                    const value = e.target.value.replace(/\D/g, '').slice(0, 4)
+                    setFormData(prev => ({ ...prev, mask: value }))
+                  }}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Used to match imports automatically
+                </p>
+              </div>
             </div>
 
             {businesses.length > 0 && (
