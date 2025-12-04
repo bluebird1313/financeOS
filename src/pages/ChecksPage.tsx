@@ -26,6 +26,8 @@ import { useFinancialStore } from '@/stores/financialStore'
 import { useAuthStore } from '@/stores/authStore'
 import { supabase } from '@/lib/supabase'
 import { parseOFX } from '@/lib/importers/ofxParser'
+import { parseExcel } from '@/lib/importers/excelParser'
+import { parseCSV } from '@/lib/importers/csvParser'
 import { detectCheckNumber, detectPaymentType } from '@/lib/importers/aiCategorization'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -84,6 +86,7 @@ export default function ImportCenterPage() {
     addCheck, 
     addTransaction,
     fetchAccounts,
+    fetchTransactions,
   } = useFinancialStore()
   const { toast } = useToast()
   
@@ -211,25 +214,148 @@ export default function ImportCenterPage() {
         const docImport = docResult.data as DocumentImport
 
         try {
-          // Read file content
-          const { content, type } = await readFileContent(file)
+          // Detect file type
+          const fileName = file.name.toLowerCase()
+          let fileExt = fileName.split('.').pop() || ''
           
-          // For QBO/OFX/QFX files, use the local parser directly (much more reliable)
-          if (type === 'qbo' || type === 'ofx' || type === 'qfx') {
+          // For Excel files, use local parser directly (much faster than AI)
+          if (fileExt === 'xlsx' || fileExt === 'xls') {
+            setProcessingStatus(`Parsing Excel file ${file.name}...`)
+            const buffer = await file.arrayBuffer()
+            const parseResult = parseExcel(buffer, undefined, { hasHeaderRow: true })
+            
+            if (!parseResult.success || parseResult.transactions.length === 0) {
+              throw new Error(parseResult.errors?.[0]?.message || 'No transactions found in Excel file')
+            }
+            
+            // Create pending import items in batches
+            const pendingItems = parseResult.transactions.map(txn => {
+              const checkNum = txn.checkNumber || detectCheckNumber(txn.description)
+              return {
+                user_id: user.id,
+                document_import_id: docImport.id,
+                item_type: checkNum ? 'check' : 'transaction',
+                date: txn.date || new Date().toISOString().split('T')[0],
+                amount: txn.amount || 0,
+                description: txn.description,
+                merchant_name: txn.description,
+                memo: txn.memo || null,
+                check_number: checkNum || null,
+                reference_id: txn.referenceId || null,
+                status: 'pending',
+                ai_confidence: 0.9,
+                ai_notes: `Parsed from Excel file`,
+              }
+            })
+            
+            // Batch insert (100 at a time for optimal performance)
+            const BATCH_SIZE = 100
+            let itemsCreated = 0
+            for (let i = 0; i < pendingItems.length; i += BATCH_SIZE) {
+              const batch = pendingItems.slice(i, i + BATCH_SIZE)
+              setProcessingStatus(`Importing ${Math.min(i + BATCH_SIZE, pendingItems.length)} of ${pendingItems.length} transactions...`)
+              const { error } = await supabase
+                .from('pending_import_items')
+                .insert(batch)
+              
+              if (!error) {
+                itemsCreated += batch.length
+              }
+            }
+            
+            // Update document import status
+            await supabase
+              .from('document_imports')
+              .update({
+                status: 'needs_review',
+                transactions_found: itemsCreated,
+              })
+              .eq('id', docImport.id)
+            
+            totalItems += itemsCreated
+            totalProcessed++
+            
+            toast({
+              title: `Processed ${file.name}`,
+              description: `Found ${itemsCreated} transactions from Excel file`,
+            })
+          }
+          // For CSV files, use local parser directly
+          else if (fileExt === 'csv') {
+            setProcessingStatus(`Parsing CSV file ${file.name}...`)
+            const content = await file.text()
+            const parseResult = parseCSV(content, undefined, { hasHeaderRow: true, filename: file.name })
+            
+            if (!parseResult.success || parseResult.transactions.length === 0) {
+              throw new Error(parseResult.errors?.[0]?.message || 'No transactions found in CSV file')
+            }
+            
+            // Create pending import items in batches
+            const pendingItems = parseResult.transactions.map(txn => {
+              const checkNum = txn.checkNumber || detectCheckNumber(txn.description)
+              return {
+                user_id: user.id,
+                document_import_id: docImport.id,
+                item_type: checkNum ? 'check' : 'transaction',
+                date: txn.date || new Date().toISOString().split('T')[0],
+                amount: txn.amount || 0,
+                description: txn.description,
+                merchant_name: txn.description,
+                memo: txn.memo || null,
+                check_number: checkNum || null,
+                reference_id: txn.referenceId || null,
+                status: 'pending',
+                ai_confidence: 0.9,
+                ai_notes: `Parsed from CSV file`,
+              }
+            })
+            
+            // Batch insert (100 at a time)
+            const BATCH_SIZE = 100
+            let itemsCreated = 0
+            for (let i = 0; i < pendingItems.length; i += BATCH_SIZE) {
+              const batch = pendingItems.slice(i, i + BATCH_SIZE)
+              setProcessingStatus(`Importing ${Math.min(i + BATCH_SIZE, pendingItems.length)} of ${pendingItems.length} transactions...`)
+              const { error } = await supabase
+                .from('pending_import_items')
+                .insert(batch)
+              
+              if (!error) {
+                itemsCreated += batch.length
+              }
+            }
+            
+            // Update document import status
+            await supabase
+              .from('document_imports')
+              .update({
+                status: 'needs_review',
+                transactions_found: itemsCreated,
+              })
+              .eq('id', docImport.id)
+            
+            totalItems += itemsCreated
+            totalProcessed++
+            
+            toast({
+              title: `Processed ${file.name}`,
+              description: `Found ${itemsCreated} transactions from CSV file${parseResult.detectedAccount?.mask ? ` (account ...${parseResult.detectedAccount.mask})` : ''}`,
+            })
+          }
+          // For QBO/OFX/QFX files, use local parser with batch insert
+          else if (fileExt === 'qbo' || fileExt === 'ofx' || fileExt === 'qfx') {
+            setProcessingStatus(`Parsing ${fileExt.toUpperCase()} file ${file.name}...`)
+            const content = await file.text()
             const parseResult = parseOFX(content)
             
             if (!parseResult.success || parseResult.transactions.length === 0) {
               throw new Error(parseResult.errors?.[0]?.message || 'No transactions found in file')
             }
             
-            // Create pending import items from parsed transactions
-            let itemsCreated = 0
-            for (const txn of parseResult.transactions) {
-              // Detect if this is a check
+            // Create pending import items in batches (much faster than one at a time!)
+            const pendingItems = parseResult.transactions.map(txn => {
               const checkNum = txn.checkNumber || detectCheckNumber(txn.description)
-              const paymentType = detectPaymentType(txn.description)
-              
-              const pendingItem = {
+              return {
                 user_id: user.id,
                 document_import_id: docImport.id,
                 item_type: checkNum ? 'check' : 'transaction',
@@ -242,15 +368,22 @@ export default function ImportCenterPage() {
                 reference_id: txn.referenceId || null,
                 status: 'pending',
                 ai_confidence: 0.95,
-                ai_notes: `Parsed from ${type.toUpperCase()} file`,
+                ai_notes: `Parsed from ${fileExt.toUpperCase()} file`,
               }
-              
+            })
+            
+            // Batch insert (100 at a time for optimal performance)
+            const BATCH_SIZE = 100
+            let itemsCreated = 0
+            for (let i = 0; i < pendingItems.length; i += BATCH_SIZE) {
+              const batch = pendingItems.slice(i, i + BATCH_SIZE)
+              setProcessingStatus(`Importing ${Math.min(i + BATCH_SIZE, pendingItems.length)} of ${pendingItems.length} transactions...`)
               const { error } = await supabase
                 .from('pending_import_items')
-                .insert(pendingItem)
+                .insert(batch)
               
               if (!error) {
-                itemsCreated++
+                itemsCreated += batch.length
               }
             }
             
@@ -259,7 +392,7 @@ export default function ImportCenterPage() {
               .from('document_imports')
               .update({
                 status: 'needs_review',
-                transactions_found: parseResult.transactions.length,
+                transactions_found: itemsCreated,
               })
               .eq('id', docImport.id)
             
@@ -271,7 +404,8 @@ export default function ImportCenterPage() {
               description: `Found ${itemsCreated} transactions from ${parseResult.detectedAccount?.mask ? `account ...${parseResult.detectedAccount.mask}` : 'bank export'}`,
             })
           } else {
-            // For other files, use AI processing
+            // For other files (PDF, images), use AI processing
+            const { content, type } = await readFileContent(file)
             const result = await processDocumentImport(
               content,
               type,
@@ -427,10 +561,118 @@ export default function ImportCenterPage() {
     }
   }
 
-  // Approve all pending items
+  // Approve all pending items with batch processing
   const approveAllItems = async () => {
-    for (const item of pendingItems) {
-      await approveItem(item)
+    if (!user || pendingItems.length === 0) return
+    
+    setIsProcessing(true)
+    setProcessingStatus('Approving all items...')
+    
+    try {
+      // Separate items into transactions and checks
+      const transactions = pendingItems.filter(item => !(item.item_type === 'check' && item.check_number))
+      const checks = pendingItems.filter(item => item.item_type === 'check' && item.check_number)
+      
+      let approvedCount = 0
+      const BATCH_SIZE = 50
+      
+      // Batch insert transactions
+      if (transactions.length > 0) {
+        for (let i = 0; i < transactions.length; i += BATCH_SIZE) {
+          const batch = transactions.slice(i, i + BATCH_SIZE)
+          setProcessingStatus(`Importing transactions ${i + 1}-${Math.min(i + BATCH_SIZE, transactions.length)} of ${transactions.length}...`)
+          
+          const transactionsToInsert = batch.map(item => ({
+            user_id: user.id,
+            account_id: item.suggested_account_id || accounts[0]?.id,
+            amount: item.amount,
+            date: item.date,
+            name: item.description,
+            merchant_name: item.merchant_name || null,
+            category_id: item.suggested_category_id || null,
+            business_id: item.suggested_business_id || null,
+            is_business_expense: item.is_business_expense,
+            is_manual: true,
+            notes: item.memo || null,
+            check_number: item.check_number || null,
+          }))
+          
+          const { data: insertedTxns, error: insertError } = await supabase
+            .from('transactions')
+            .insert(transactionsToInsert)
+            .select('id')
+          
+          if (!insertError && insertedTxns) {
+            // Mark pending items as approved
+            const itemIds = batch.map(item => item.id)
+            await supabase
+              .from('pending_import_items')
+              .update({ 
+                status: 'approved',
+                reviewed_at: new Date().toISOString(),
+              })
+              .in('id', itemIds)
+            
+            approvedCount += batch.length
+          }
+        }
+      }
+      
+      // For checks, still do them one at a time since addCheck has special logic
+      for (const item of checks) {
+        setProcessingStatus(`Importing check ${approvedCount + 1} of ${pendingItems.length}...`)
+        try {
+          const check = await addCheck({
+            user_id: user.id,
+            account_id: item.suggested_account_id || accounts[0]?.id,
+            check_number: item.check_number!,
+            payee: item.payee || item.description,
+            amount: Math.abs(item.amount),
+            date_written: item.date,
+            memo: item.memo || null,
+            category_id: item.suggested_category_id || null,
+            business_id: item.suggested_business_id || null,
+            status: 'pending',
+          })
+          
+          if (check) {
+            await supabase
+              .from('pending_import_items')
+              .update({ 
+                status: 'approved',
+                imported_check_id: check.id,
+                reviewed_at: new Date().toISOString(),
+              })
+              .eq('id', item.id)
+            approvedCount++
+          }
+        } catch (err) {
+          console.error('Error approving check:', err)
+        }
+      }
+      
+      toast({
+        title: 'Bulk Import Complete',
+        description: `Successfully imported ${approvedCount} of ${pendingItems.length} items.`,
+      })
+      
+      // Refresh data
+      fetchPendingItems()
+      if (user) {
+        fetchAccounts(user.id)
+        fetchTransactions(user.id)
+      }
+      
+    } catch (error: any) {
+      console.error('Error in bulk approve:', error)
+      toast({
+        title: 'Bulk Import Error',
+        description: error.message,
+        variant: 'destructive',
+      })
+    } finally {
+      setIsProcessing(false)
+      setProcessingStatus('')
     }
   }
 
