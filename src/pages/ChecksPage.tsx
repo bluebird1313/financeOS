@@ -246,7 +246,6 @@ export default function ImportCenterPage() {
                 status: 'pending',
                 ai_confidence: 0.95, // High confidence since it's parsed directly
                 ai_notes: `Parsed from ${type.toUpperCase()} file`,
-                needs_review: false,
               }
               
               const { error } = await supabase
