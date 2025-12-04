@@ -498,12 +498,22 @@ export default function AccountsPage() {
               onClick={async () => {
                 if (!accountToDelete) return
                 setIsDeleting(true)
+                
+                // Add timeout to prevent infinite loading
+                const timeoutPromise = new Promise<boolean>((_, reject) => {
+                  setTimeout(() => reject(new Error('Request timed out')), 30000)
+                })
+                
                 try {
-                  const success = await deleteAccount(accountToDelete.id)
+                  const success = await Promise.race([
+                    deleteAccount(accountToDelete.id),
+                    timeoutPromise
+                  ])
+                  
                   if (success) {
                     toast({
                       title: 'Account removed',
-                      description: `${accountToDelete.name} has been removed.`,
+                      description: `${accountToDelete.name} and all associated transactions have been removed.`,
                     })
                     setAccountToDelete(null)
                   } else {
@@ -517,7 +527,9 @@ export default function AccountsPage() {
                   console.error('Error deleting account:', error)
                   toast({
                     title: 'Error',
-                    description: 'Failed to remove account. Please try again.',
+                    description: error instanceof Error && error.message === 'Request timed out' 
+                      ? 'The request timed out. The account may have many transactions. Please try again.'
+                      : 'Failed to remove account. Please try again.',
                     variant: 'destructive',
                   })
                 } finally {

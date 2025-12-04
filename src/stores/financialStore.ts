@@ -335,14 +335,65 @@ export const useFinancialStore = create<FinancialState>((set, get) => ({
 
   deleteAccount: async (id) => {
     try {
+      // First, delete all transactions associated with this account
+      // This prevents timeout issues with large cascading deletes
+      const { error: txnError } = await supabase
+        .from('transactions')
+        .delete()
+        .eq('account_id', id)
+      
+      if (txnError) {
+        console.error('Error deleting account transactions:', txnError)
+        // Continue anyway - the cascade will handle it
+      }
+
+      // Delete any transaction hashes for this account
+      const { error: hashError } = await supabase
+        .from('transaction_hashes')
+        .delete()
+        .eq('account_id', id)
+      
+      if (hashError) {
+        console.error('Error deleting transaction hashes:', hashError)
+        // Continue anyway
+      }
+
+      // Delete any checks associated with this account
+      const { error: checkError } = await supabase
+        .from('checks')
+        .delete()
+        .eq('account_id', id)
+      
+      if (checkError) {
+        console.error('Error deleting checks:', checkError)
+        // Continue anyway
+      }
+
+      // Delete any recurring transactions for this account
+      const { error: recurringError } = await supabase
+        .from('recurring_transactions')
+        .delete()
+        .eq('account_id', id)
+      
+      if (recurringError) {
+        console.error('Error deleting recurring transactions:', recurringError)
+        // Continue anyway
+      }
+
+      // Now delete the account itself
       const { error } = await supabase
         .from('accounts')
         .delete()
         .eq('id', id)
       
       if (error) throw error
+      
+      // Update local state - remove account and its transactions
       set(state => ({
         accounts: state.accounts.filter(a => a.id !== id),
+        transactions: state.transactions.filter(t => t.account_id !== id),
+        checks: state.checks.filter(c => c.account_id !== id),
+        recurringTransactions: state.recurringTransactions.filter(r => r.account_id !== id),
       }))
       return true
     } catch (error) {
