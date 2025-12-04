@@ -25,6 +25,8 @@ import {
 import { useFinancialStore } from '@/stores/financialStore'
 import { useAuthStore } from '@/stores/authStore'
 import { supabase } from '@/lib/supabase'
+import { parseOFX } from '@/lib/importers/ofxParser'
+import { detectCheckNumber, detectPaymentType } from '@/lib/importers/aiCategorization'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -212,23 +214,82 @@ export default function ImportCenterPage() {
           // Read file content
           const { content, type } = await readFileContent(file)
           
-          // Process with AI
-          const result = await processDocumentImport(
-            content,
-            type,
-            file.name,
-            docImport.id
-          )
-
-          if (result.success) {
-            totalItems += result.items_created || 0
+          // For QBO/OFX/QFX files, use the local parser directly (much more reliable)
+          if (type === 'qbo' || type === 'ofx' || type === 'qfx') {
+            const parseResult = parseOFX(content)
+            
+            if (!parseResult.success || parseResult.transactions.length === 0) {
+              throw new Error(parseResult.errors?.[0]?.message || 'No transactions found in file')
+            }
+            
+            // Create pending import items from parsed transactions
+            let itemsCreated = 0
+            for (const txn of parseResult.transactions) {
+              // Detect if this is a check
+              const checkNum = txn.checkNumber || detectCheckNumber(txn.description)
+              const paymentType = detectPaymentType(txn.description)
+              
+              const pendingItem = {
+                user_id: user.id,
+                document_import_id: docImport.id,
+                item_type: checkNum ? 'check' : 'transaction',
+                date: txn.date || new Date().toISOString().split('T')[0],
+                amount: txn.amount || 0,
+                description: txn.description,
+                merchant_name: txn.description,
+                memo: txn.memo || null,
+                check_number: checkNum || null,
+                reference_id: txn.referenceId || null,
+                status: 'pending',
+                ai_confidence: 0.95, // High confidence since it's parsed directly
+                ai_notes: `Parsed from ${type.toUpperCase()} file`,
+                needs_review: false,
+              }
+              
+              const { error } = await supabase
+                .from('pending_import_items')
+                .insert(pendingItem)
+              
+              if (!error) {
+                itemsCreated++
+              }
+            }
+            
+            // Update document import status
+            await supabase
+              .from('document_imports')
+              .update({
+                status: 'needs_review',
+                transactions_found: parseResult.transactions.length,
+              })
+              .eq('id', docImport.id)
+            
+            totalItems += itemsCreated
             totalProcessed++
+            
             toast({
               title: `Processed ${file.name}`,
-              description: `Found ${result.items_created || 0} items. ${result.summary}`,
+              description: `Found ${itemsCreated} transactions from ${parseResult.detectedAccount?.mask ? `account ...${parseResult.detectedAccount.mask}` : 'bank export'}`,
             })
           } else {
-            throw new Error(result.error || 'Processing failed')
+            // For other files, use AI processing
+            const result = await processDocumentImport(
+              content,
+              type,
+              file.name,
+              docImport.id
+            )
+
+            if (result.success) {
+              totalItems += result.items_created || 0
+              totalProcessed++
+              toast({
+                title: `Processed ${file.name}`,
+                description: `Found ${result.items_created || 0} items. ${result.summary}`,
+              })
+            } else {
+              throw new Error(result.error || 'Processing failed')
+            }
           }
         } catch (processError: any) {
           console.error('Error processing file:', processError)
