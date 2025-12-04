@@ -54,19 +54,28 @@ function parseOFXDate(dateStr: string): string | null {
 
 /**
  * Extract text content between OFX tags
+ * Handles multiple OFX/QBO format variations
  */
 function extractTagValue(content: string, tag: string): string | null {
-  // OFX uses SGML-style tags: <TAG>value (no closing tag usually)
+  // OFX/QBO uses SGML-style tags: <TAG>value (no closing tag usually)
   // or sometimes <TAG>value</TAG>
+  // Some banks include extra whitespace or newlines
   const patterns = [
-    new RegExp(`<${tag}>([^<]+)(?:</${tag}>)?`, 'i'),
-    new RegExp(`<${tag}>\\s*([^\\n<]+)`, 'i'),
+    // Standard OFX format with closing tag
+    new RegExp(`<${tag}>([^<]+)</${tag}>`, 'i'),
+    // OFX format without closing tag (most common)
+    new RegExp(`<${tag}>([^<\\n\\r]+)`, 'i'),
+    // Format with newline after value
+    new RegExp(`<${tag}>\\s*([^\\n\\r<]+)`, 'i'),
+    // Some QBO files have whitespace before value
+    new RegExp(`<${tag}>\\s+([^<]+?)\\s*(?:<|$)`, 'i'),
   ]
   
   for (const pattern of patterns) {
     const match = content.match(pattern)
     if (match && match[1]) {
-      return match[1].trim()
+      const value = match[1].trim()
+      if (value) return value
     }
   }
   
@@ -75,32 +84,61 @@ function extractTagValue(content: string, tag: string): string | null {
 
 /**
  * Extract all transactions from OFX content
+ * Handles multiple format variations from different banks
  */
 function extractTransactions(content: string): OFXTransaction[] {
   const transactions: OFXTransaction[] = []
   
-  // Find all STMTTRN blocks
-  const stmttrnPattern = /<STMTTRN>([\s\S]*?)(?=<STMTTRN>|<\/STMTTRN>|<\/BANKTRANLIST>|<\/CCSTMTRS>|$)/gi
-  let match
+  // Normalize content - remove Windows line endings and extra whitespace
+  const normalizedContent = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
   
-  while ((match = stmttrnPattern.exec(content)) !== null) {
-    const block = match[1]
+  // Find all STMTTRN blocks - try multiple patterns for different bank formats
+  const patterns = [
+    // Standard OFX with closing tag
+    /<STMTTRN>([\s\S]*?)<\/STMTTRN>/gi,
+    // OFX without closing tag (terminated by next STMTTRN or end of list)
+    /<STMTTRN>([\s\S]*?)(?=<STMTTRN>|<\/BANKTRANLIST>|<\/CCSTMTRS>|<\/STMTTRNRS>|$)/gi,
+  ]
+  
+  let foundTransactions = false
+  
+  for (const pattern of patterns) {
+    if (foundTransactions) break
     
-    const transaction: OFXTransaction = {
-      TRNTYPE: extractTagValue(block, 'TRNTYPE') || undefined,
-      DTPOSTED: extractTagValue(block, 'DTPOSTED') || undefined,
-      DTUSER: extractTagValue(block, 'DTUSER') || undefined,
-      TRNAMT: extractTagValue(block, 'TRNAMT') || undefined,
-      FITID: extractTagValue(block, 'FITID') || undefined,
-      NAME: extractTagValue(block, 'NAME') || undefined,
-      MEMO: extractTagValue(block, 'MEMO') || undefined,
-      CHECKNUM: extractTagValue(block, 'CHECKNUM') || undefined,
-      REFNUM: extractTagValue(block, 'REFNUM') || undefined,
-    }
+    let match
+    pattern.lastIndex = 0 // Reset regex state
     
-    // Only add if we have meaningful data
-    if (transaction.DTPOSTED || transaction.TRNAMT || transaction.NAME) {
-      transactions.push(transaction)
+    while ((match = pattern.exec(normalizedContent)) !== null) {
+      foundTransactions = true
+      const block = match[1]
+      
+      // Extract NAME - some banks use PAYEE instead
+      let name = extractTagValue(block, 'NAME')
+      if (!name) {
+        // Try PAYEE tag (used by some Intuit QBO exports)
+        name = extractTagValue(block, 'PAYEE')
+      }
+      if (!name) {
+        // Some banks put description in MEMO only
+        name = extractTagValue(block, 'MEMO')
+      }
+      
+      const transaction: OFXTransaction = {
+        TRNTYPE: extractTagValue(block, 'TRNTYPE') || undefined,
+        DTPOSTED: extractTagValue(block, 'DTPOSTED') || undefined,
+        DTUSER: extractTagValue(block, 'DTUSER') || undefined,
+        TRNAMT: extractTagValue(block, 'TRNAMT') || undefined,
+        FITID: extractTagValue(block, 'FITID') || undefined,
+        NAME: name || undefined,
+        MEMO: extractTagValue(block, 'MEMO') || undefined,
+        CHECKNUM: extractTagValue(block, 'CHECKNUM') || extractTagValue(block, 'CHKNUM') || undefined,
+        REFNUM: extractTagValue(block, 'REFNUM') || undefined,
+      }
+      
+      // Only add if we have meaningful data (at least a date or amount)
+      if (transaction.DTPOSTED || transaction.TRNAMT || transaction.NAME) {
+        transactions.push(transaction)
+      }
     }
   }
   
@@ -306,17 +344,23 @@ export function parseOFX(content: string): ParseResult {
 }
 
 /**
- * Detect if content is OFX format
+ * Detect if content is OFX/QBO/QFX format
  */
 export function isOFXFormat(content: string): boolean {
-  // Check for OFX headers or tags
+  // Check for OFX/QBO/QFX headers or tags
   const markers = [
     'OFXHEADER',
     '<OFX>',
     '<BANKMSGSRSV1>',
     '<CREDITCARDMSGSRSV1>',
     '<STMTTRN>',
+    '<BANKTRANLIST>',
     'ENCODING:',
+    'DATA:OFXSGML',
+    'INTU.BID',  // Intuit Bank ID (QBO specific)
+    'INTUIT',
+    '<SONRS>',   // Signon response
+    '<STMTRS>',  // Statement response
   ]
   
   const upperContent = content.toUpperCase()

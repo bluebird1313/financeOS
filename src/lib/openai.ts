@@ -607,6 +607,7 @@ export async function readFileContent(file: File): Promise<{ content: string; ty
   if (fileName.endsWith('.csv')) type = 'csv'
   else if (fileName.endsWith('.ofx')) type = 'ofx'
   else if (fileName.endsWith('.qfx')) type = 'qfx'
+  else if (fileName.endsWith('.qbo')) type = 'qbo'
   else if (fileName.endsWith('.pdf')) type = 'pdf'
   else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) type = 'excel'
   else if (file.type.startsWith('image/')) type = 'image'

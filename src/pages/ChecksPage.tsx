@@ -166,7 +166,9 @@ export default function ImportCenterPage() {
       'application/pdf': ['.pdf'],
       'application/x-ofx': ['.ofx'],
       'application/x-qfx': ['.qfx'],
-      'text/plain': ['.ofx', '.qfx'],
+      'application/x-qbo': ['.qbo'],
+      'application/vnd.intu.qbo': ['.qbo'],
+      'text/plain': ['.ofx', '.qfx', '.qbo'],
       'image/*': ['.png', '.jpg', '.jpeg', '.gif', '.webp'],
     },
     multiple: true,
@@ -542,7 +544,7 @@ export default function ImportCenterPage() {
                             { ext: 'PDF', desc: 'Bank Statements' },
                             { ext: 'CSV', desc: 'Transaction Exports' },
                             { ext: 'Excel', desc: 'Spreadsheets' },
-                            { ext: 'OFX/QFX', desc: 'Quicken Files' },
+                            { ext: 'QBO/OFX/QFX', desc: 'Bank Exports' },
                             { ext: 'Images', desc: 'Check Photos' },
                           ].map(type => (
                             <Badge key={type.ext} variant="outline" className="text-xs">
@@ -679,7 +681,7 @@ export default function ImportCenterPage() {
                     { icon: FileText, name: 'PDF', desc: 'Bank statements, invoices' },
                     { icon: FileSpreadsheet, name: 'CSV', desc: 'Transaction exports' },
                     { icon: FileSpreadsheet, name: 'Excel', desc: 'Spreadsheets (.xlsx)' },
-                    { icon: File, name: 'OFX/QFX', desc: 'Quicken format' },
+                    { icon: File, name: 'QBO/OFX/QFX', desc: 'Intuit/Quicken' },
                     { icon: Image, name: 'Images', desc: 'Check photos, receipts' },
                   ].map(type => (
                     <div key={type.name} className="text-center p-4 rounded-lg bg-accent/30">
