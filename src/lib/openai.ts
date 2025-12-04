@@ -311,6 +311,200 @@ Respond with JSON:
   }
 }
 
+// AI-powered subscription detection
+export interface DetectedSubscription {
+  merchant_name: string
+  amount: number
+  frequency: 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly'
+  last_date: string
+  transaction_count: number
+  confidence: number
+  category?: string
+  is_essential: boolean
+  notes?: string
+}
+
+export interface SubscriptionDetectionResult {
+  subscriptions: DetectedSubscription[]
+  total_monthly_cost: number
+  summary: string
+}
+
+export async function detectSubscriptions(
+  transactions: Array<{
+    id: string
+    merchant_name: string | null
+    name: string
+    amount: number
+    date: string
+  }>
+): Promise<SubscriptionDetectionResult> {
+  // First, let's do pattern detection locally to find potential recurring transactions
+  const merchantGroups: Record<string, Array<{ amount: number; date: string; name: string }>> = {}
+  
+  // Group transactions by merchant/name
+  for (const t of transactions) {
+    // Only look at expenses (negative amounts or let AI figure it out)
+    const key = (t.merchant_name || t.name || '').toLowerCase().trim()
+    if (!key || key.length < 2) continue
+    
+    if (!merchantGroups[key]) {
+      merchantGroups[key] = []
+    }
+    merchantGroups[key].push({ 
+      amount: Math.abs(t.amount), 
+      date: t.date,
+      name: t.merchant_name || t.name
+    })
+  }
+  
+  // Find merchants with multiple transactions (potential subscriptions)
+  const potentialSubscriptions: Array<{
+    merchant: string
+    transactions: Array<{ amount: number; date: string; name: string }>
+    avg_amount: number
+    occurrence_count: number
+  }> = []
+  
+  for (const [merchant, txns] of Object.entries(merchantGroups)) {
+    if (txns.length >= 2) {
+      const amounts = txns.map(t => t.amount)
+      const avgAmount = amounts.reduce((a, b) => a + b, 0) / amounts.length
+      // Check if amounts are relatively consistent (within 20% variance)
+      const isConsistent = amounts.every(a => Math.abs(a - avgAmount) / avgAmount < 0.2)
+      
+      if (isConsistent || txns.length >= 3) {
+        potentialSubscriptions.push({
+          merchant,
+          transactions: txns.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+          avg_amount: avgAmount,
+          occurrence_count: txns.length
+        })
+      }
+    }
+  }
+  
+  if (potentialSubscriptions.length === 0) {
+    return {
+      subscriptions: [],
+      total_monthly_cost: 0,
+      summary: 'No recurring subscriptions detected in your transactions.'
+    }
+  }
+  
+  // Use AI to analyze and classify the potential subscriptions
+  const subscriptionSummary = potentialSubscriptions.slice(0, 30).map(s => {
+    const dates = s.transactions.map(t => t.date).slice(0, 5).join(', ')
+    return `- ${s.transactions[0].name}: $${s.avg_amount.toFixed(2)} avg, ${s.occurrence_count} occurrences, dates: ${dates}`
+  }).join('\n')
+  
+  const prompt = `Analyze these recurring transactions and identify which ones are subscriptions or recurring bills:
+
+${subscriptionSummary}
+
+For each item that appears to be a subscription or recurring service, determine:
+1. The clean merchant name
+2. Whether it's a subscription (like Netflix, Spotify) or a recurring bill (like utilities, insurance)
+3. The likely billing frequency (weekly, biweekly, monthly, quarterly, yearly) based on date patterns
+4. A confidence score (0-1) that this is truly a recurring charge
+5. Whether it seems essential (utilities, insurance, phone) vs optional (streaming, gaming)
+6. Suggested category (Entertainment, Utilities, Insurance, Software, Health, Membership, Other)
+
+Return JSON array only:
+[{
+  "merchant_name": "Clean Name",
+  "original_name": "original from list",
+  "amount": 9.99,
+  "frequency": "monthly",
+  "confidence": 0.95,
+  "is_essential": false,
+  "category": "Entertainment",
+  "notes": "Streaming service"
+}, ...]
+
+Only include items with confidence > 0.5. Skip one-time purchases, refunds, or irregular transactions.`
+
+  try {
+    const content = await callOpenAI(
+      [{ role: 'user', content: prompt }],
+      'categorize'
+    )
+    
+    const aiResults = JSON.parse(content.replace(/```json\n?|\n?```/g, '')) as Array<{
+      merchant_name: string
+      original_name: string
+      amount: number
+      frequency: 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly'
+      confidence: number
+      is_essential: boolean
+      category: string
+      notes?: string
+    }>
+    
+    // Match AI results back to our data and enrich with dates
+    const subscriptions: DetectedSubscription[] = aiResults.map(ai => {
+      const match = potentialSubscriptions.find(
+        p => p.transactions[0].name.toLowerCase().includes(ai.original_name?.toLowerCase() || ai.merchant_name.toLowerCase()) ||
+             ai.merchant_name.toLowerCase().includes(p.merchant.substring(0, 8))
+      )
+      
+      return {
+        merchant_name: ai.merchant_name,
+        amount: ai.amount || match?.avg_amount || 0,
+        frequency: ai.frequency,
+        last_date: match?.transactions[0]?.date || new Date().toISOString().split('T')[0],
+        transaction_count: match?.occurrence_count || 2,
+        confidence: ai.confidence,
+        category: ai.category,
+        is_essential: ai.is_essential,
+        notes: ai.notes
+      }
+    }).filter(s => s.confidence > 0.5)
+    
+    // Calculate total monthly cost
+    const monthlyMultipliers: Record<string, number> = {
+      weekly: 4.33,
+      biweekly: 2.17,
+      monthly: 1,
+      quarterly: 0.33,
+      yearly: 0.083
+    }
+    
+    const totalMonthlyCost = subscriptions.reduce((sum, s) => {
+      return sum + (s.amount * (monthlyMultipliers[s.frequency] || 1))
+    }, 0)
+    
+    return {
+      subscriptions,
+      total_monthly_cost: totalMonthlyCost,
+      summary: `Found ${subscriptions.length} potential subscriptions totaling ~$${totalMonthlyCost.toFixed(2)}/month`
+    }
+  } catch (error) {
+    console.error('Error detecting subscriptions with AI:', error)
+    
+    // Fallback: return pattern-detected subscriptions without AI classification
+    const fallbackSubs: DetectedSubscription[] = potentialSubscriptions
+      .filter(p => p.occurrence_count >= 3)
+      .slice(0, 10)
+      .map(p => ({
+        merchant_name: p.transactions[0].name,
+        amount: p.avg_amount,
+        frequency: 'monthly' as const,
+        last_date: p.transactions[0].date,
+        transaction_count: p.occurrence_count,
+        confidence: 0.6,
+        is_essential: false,
+        notes: 'Detected by pattern matching'
+      }))
+    
+    return {
+      subscriptions: fallbackSubs,
+      total_monthly_cost: fallbackSubs.reduce((sum, s) => sum + s.amount, 0),
+      summary: `Found ${fallbackSubs.length} recurring transactions (AI classification unavailable)`
+    }
+  }
+}
+
 export async function suggestCheckPayee(
   checkNumber: string,
   amount: number,

@@ -64,6 +64,9 @@ interface FinancialState {
   matchCheckToTransaction: (checkId: string, transactionId: string) => Promise<void>
   addBill: (bill: Partial<Bill>) => Promise<Bill | null>
   updateBill: (id: string, updates: Partial<Bill>) => Promise<void>
+  addRecurringTransaction: (transaction: Partial<RecurringTransaction>) => Promise<RecurringTransaction | null>
+  updateRecurringTransaction: (id: string, updates: Partial<RecurringTransaction>) => Promise<void>
+  deleteRecurringTransaction: (id: string) => Promise<boolean>
   addBusiness: (business: Partial<Business>) => Promise<Business | null>
   markAlertRead: (id: string) => Promise<void>
   dismissAlert: (id: string) => Promise<void>
@@ -508,6 +511,59 @@ export const useFinancialStore = create<FinancialState>((set, get) => ({
       }))
     } catch (error) {
       console.error('Error updating bill:', error)
+    }
+  },
+
+  addRecurringTransaction: async (transaction) => {
+    try {
+      const { data, error } = await supabase
+        .from('recurring_transactions')
+        .insert(transaction)
+        .select()
+        .single()
+      
+      if (error) throw error
+      set(state => ({ recurringTransactions: [data, ...state.recurringTransactions] }))
+      return data
+    } catch (error) {
+      console.error('Error adding recurring transaction:', error)
+      return null
+    }
+  },
+
+  updateRecurringTransaction: async (id, updates) => {
+    try {
+      const { error } = await supabase
+        .from('recurring_transactions')
+        .update({ ...updates, updated_at: new Date().toISOString() })
+        .eq('id', id)
+      
+      if (error) throw error
+      set(state => ({
+        recurringTransactions: state.recurringTransactions.map(r => 
+          r.id === id ? { ...r, ...updates } : r
+        ),
+      }))
+    } catch (error) {
+      console.error('Error updating recurring transaction:', error)
+    }
+  },
+
+  deleteRecurringTransaction: async (id) => {
+    try {
+      const { error } = await supabase
+        .from('recurring_transactions')
+        .delete()
+        .eq('id', id)
+      
+      if (error) throw error
+      set(state => ({
+        recurringTransactions: state.recurringTransactions.filter(r => r.id !== id),
+      }))
+      return true
+    } catch (error) {
+      console.error('Error deleting recurring transaction:', error)
+      return false
     }
   },
 

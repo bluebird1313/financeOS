@@ -14,9 +14,15 @@ import {
   Trash2,
   Bell,
   CreditCard,
+  Sparkles,
+  Loader2,
+  Check,
+  X,
+  RefreshCcw,
 } from 'lucide-react'
 import { useFinancialStore } from '@/stores/financialStore'
 import { useAuthStore } from '@/stores/authStore'
+import { detectSubscriptions, type DetectedSubscription } from '@/lib/openai'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -54,15 +60,22 @@ export default function BillsPage() {
   const { 
     bills, 
     recurringTransactions, 
+    transactions,
     accounts,
     categories,
     addBill,
     updateBill,
+    addRecurringTransaction,
     isLoadingBills,
   } = useFinancialStore()
   const { toast } = useToast()
   
   const [showAddDialog, setShowAddDialog] = useState(false)
+  const [showDetectDialog, setShowDetectDialog] = useState(false)
+  const [isDetecting, setIsDetecting] = useState(false)
+  const [detectedSubscriptions, setDetectedSubscriptions] = useState<DetectedSubscription[]>([])
+  const [selectedSubscriptions, setSelectedSubscriptions] = useState<Set<number>>(new Set())
+  const [detectionSummary, setDetectionSummary] = useState('')
   const [activeTab, setActiveTab] = useState('bills')
   const [formData, setFormData] = useState({
     name: '',
@@ -130,6 +143,110 @@ export default function BillsPage() {
     })
   }
 
+  const handleDetectSubscriptions = async () => {
+    if (!user || transactions.length === 0) {
+      toast({
+        title: 'No transactions',
+        description: 'Import some transactions first to detect subscriptions.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setIsDetecting(true)
+    setShowDetectDialog(true)
+    setDetectedSubscriptions([])
+    setSelectedSubscriptions(new Set())
+    
+    try {
+      const result = await detectSubscriptions(
+        transactions.map(t => ({
+          id: t.id,
+          merchant_name: t.merchant_name,
+          name: t.name,
+          amount: t.amount,
+          date: t.date,
+        }))
+      )
+      
+      setDetectedSubscriptions(result.subscriptions)
+      setDetectionSummary(result.summary)
+      
+      // Pre-select all detected subscriptions
+      setSelectedSubscriptions(new Set(result.subscriptions.map((_, i) => i)))
+      
+      if (result.subscriptions.length === 0) {
+        toast({
+          title: 'No subscriptions found',
+          description: 'We couldn\'t detect any recurring subscriptions in your transactions.',
+        })
+      }
+    } catch (error) {
+      console.error('Error detecting subscriptions:', error)
+      toast({
+        title: 'Detection failed',
+        description: error instanceof Error ? error.message : 'Could not analyze transactions.',
+        variant: 'destructive',
+      })
+    } finally {
+      setIsDetecting(false)
+    }
+  }
+
+  const toggleSubscriptionSelection = (index: number) => {
+    const newSelected = new Set(selectedSubscriptions)
+    if (newSelected.has(index)) {
+      newSelected.delete(index)
+    } else {
+      newSelected.add(index)
+    }
+    setSelectedSubscriptions(newSelected)
+  }
+
+  const handleAddSelectedSubscriptions = async () => {
+    if (!user) return
+    
+    const toAdd = detectedSubscriptions.filter((_, i) => selectedSubscriptions.has(i))
+    let addedCount = 0
+    
+    for (const sub of toAdd) {
+      // Check if already exists
+      const exists = recurringTransactions.some(
+        r => r.name.toLowerCase() === sub.merchant_name.toLowerCase() ||
+             r.merchant_name?.toLowerCase() === sub.merchant_name.toLowerCase()
+      )
+      
+      if (!exists) {
+        const result = await addRecurringTransaction({
+          user_id: user.id,
+          account_id: accounts[0]?.id || '', // Use first account as default
+          name: sub.merchant_name,
+          merchant_name: sub.merchant_name,
+          amount: sub.amount,
+          frequency: sub.frequency,
+          last_date: sub.last_date,
+          is_subscription: true,
+          is_bill: sub.is_essential,
+          is_income: false,
+          is_active: true,
+          notes: sub.notes || `Detected by AI (${Math.round(sub.confidence * 100)}% confidence)`,
+        })
+        
+        if (result) addedCount++
+      }
+    }
+    
+    toast({
+      title: 'Subscriptions added',
+      description: `Added ${addedCount} subscription${addedCount !== 1 ? 's' : ''} to your tracking.`,
+      variant: 'success',
+    })
+    
+    setShowDetectDialog(false)
+    setDetectedSubscriptions([])
+    setSelectedSubscriptions(new Set())
+  }
+
   // Calculate statistics
   const totalMonthlyBills = bills
     .filter(b => b.frequency === 'monthly')
@@ -176,10 +293,20 @@ export default function BillsPage() {
           <h1 className="font-display text-3xl font-bold">Bills & Subscriptions</h1>
           <p className="text-muted-foreground">Track your recurring payments</p>
         </div>
-        <Button onClick={() => setShowAddDialog(true)}>
-          <Plus className="w-4 h-4 mr-2" />
-          Add Bill
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={handleDetectSubscriptions} disabled={isDetecting}>
+            {isDetecting ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Sparkles className="w-4 h-4 mr-2" />
+            )}
+            {isDetecting ? 'Detecting...' : 'Detect Subscriptions'}
+          </Button>
+          <Button onClick={() => setShowAddDialog(true)}>
+            <Plus className="w-4 h-4 mr-2" />
+            Add Bill
+          </Button>
+        </div>
       </div>
 
       {/* Overdue Alert */}
@@ -421,17 +548,25 @@ export default function BillsPage() {
                 {subscriptions.length === 0 ? (
                   <div className="text-center py-12">
                     <CreditCard className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-                    <h3 className="font-semibold mb-2">No subscriptions detected</h3>
-                    <p className="text-muted-foreground">
-                      We'll automatically detect subscriptions from your transaction history.
+                    <h3 className="font-semibold mb-2">No subscriptions tracked yet</h3>
+                    <p className="text-muted-foreground mb-4">
+                      Use AI to automatically detect subscriptions from your transactions.
                     </p>
+                    <Button onClick={handleDetectSubscriptions} disabled={isDetecting}>
+                      {isDetecting ? (
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
+                        <Sparkles className="w-4 h-4 mr-2" />
+                      )}
+                      {isDetecting ? 'Detecting...' : 'Detect Subscriptions'}
+                    </Button>
                   </div>
                 ) : (
                   <div className="space-y-3">
                     {subscriptions.map((sub) => (
                       <div 
                         key={sub.id}
-                        className="flex items-center justify-between p-4 rounded-lg border bg-background/50"
+                        className="flex items-center justify-between p-4 rounded-lg border bg-background/50 group"
                       >
                         <div className="flex items-center gap-4">
                           <div className="w-12 h-12 rounded-xl bg-secondary flex items-center justify-center">
@@ -443,11 +578,53 @@ export default function BillsPage() {
                             <div className="text-sm text-muted-foreground">
                               {sub.merchant_name || 'Unknown merchant'} • {sub.frequency}
                             </div>
+                            {sub.notes && (
+                              <div className="text-xs text-muted-foreground mt-1">{sub.notes}</div>
+                            )}
                           </div>
                         </div>
                         
-                        <div className="text-lg font-semibold">
-                          {formatCurrency(sub.amount)}/mo
+                        <div className="flex items-center gap-4">
+                          <div className="text-right">
+                            <div className="text-lg font-semibold">
+                              {formatCurrency(sub.amount)}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              /{sub.frequency === 'yearly' ? 'yr' : sub.frequency === 'quarterly' ? 'qtr' : 'mo'}
+                            </div>
+                          </div>
+                          
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button 
+                                variant="ghost" 
+                                size="icon"
+                                className="opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
+                                <MoreVertical className="w-4 h-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem>
+                                <Pencil className="w-4 h-4 mr-2" />
+                                Edit
+                              </DropdownMenuItem>
+                              <DropdownMenuItem 
+                                className="text-destructive"
+                                onClick={async () => {
+                                  const { deleteRecurringTransaction } = useFinancialStore.getState()
+                                  await deleteRecurringTransaction(sub.id)
+                                  toast({
+                                    title: 'Subscription removed',
+                                    description: `${sub.name} has been removed from tracking.`,
+                                  })
+                                }}
+                              >
+                                <Trash2 className="w-4 h-4 mr-2" />
+                                Remove
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </div>
                       </div>
                     ))}
@@ -605,8 +782,150 @@ export default function BillsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Detect Subscriptions Dialog */}
+      <Dialog open={showDetectDialog} onOpenChange={setShowDetectDialog}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-primary" />
+              AI Subscription Detection
+            </DialogTitle>
+            <DialogDescription>
+              {isDetecting 
+                ? 'Analyzing your transactions for recurring subscriptions...'
+                : detectionSummary || 'Review detected subscriptions and select which ones to track.'
+              }
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="flex-1 overflow-y-auto py-4">
+            {isDetecting ? (
+              <div className="flex flex-col items-center justify-center py-12">
+                <Loader2 className="w-12 h-12 text-primary animate-spin mb-4" />
+                <p className="text-muted-foreground">Scanning {transactions.length} transactions...</p>
+              </div>
+            ) : detectedSubscriptions.length === 0 ? (
+              <div className="text-center py-12">
+                <CreditCard className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                <h3 className="font-semibold mb-2">No subscriptions detected</h3>
+                <p className="text-muted-foreground">
+                  We couldn't find recurring subscription patterns in your transactions.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between px-2 text-sm text-muted-foreground">
+                  <span>{selectedSubscriptions.size} of {detectedSubscriptions.length} selected</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      if (selectedSubscriptions.size === detectedSubscriptions.length) {
+                        setSelectedSubscriptions(new Set())
+                      } else {
+                        setSelectedSubscriptions(new Set(detectedSubscriptions.map((_, i) => i)))
+                      }
+                    }}
+                  >
+                    {selectedSubscriptions.size === detectedSubscriptions.length ? 'Deselect All' : 'Select All'}
+                  </Button>
+                </div>
+                
+                {detectedSubscriptions.map((sub, index) => {
+                  const isSelected = selectedSubscriptions.has(index)
+                  const alreadyTracked = recurringTransactions.some(
+                    r => r.name.toLowerCase() === sub.merchant_name.toLowerCase() ||
+                         r.merchant_name?.toLowerCase() === sub.merchant_name.toLowerCase()
+                  )
+                  
+                  return (
+                    <div
+                      key={index}
+                      onClick={() => !alreadyTracked && toggleSubscriptionSelection(index)}
+                      className={`flex items-center gap-4 p-4 rounded-lg border transition-colors ${
+                        alreadyTracked
+                          ? 'border-border bg-muted/50 opacity-60 cursor-not-allowed'
+                          : isSelected
+                          ? 'border-primary bg-primary/5 cursor-pointer'
+                          : 'border-border bg-background/50 cursor-pointer hover:bg-accent/50'
+                      }`}
+                    >
+                      <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${
+                        alreadyTracked
+                          ? 'border-muted-foreground bg-muted'
+                          : isSelected
+                          ? 'border-primary bg-primary text-primary-foreground'
+                          : 'border-muted-foreground'
+                      }`}>
+                        {alreadyTracked ? (
+                          <Check className="w-4 h-4" />
+                        ) : isSelected ? (
+                          <Check className="w-4 h-4" />
+                        ) : null}
+                      </div>
+                      
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold">{sub.merchant_name}</span>
+                          {alreadyTracked && (
+                            <Badge variant="secondary" className="text-xs">Already tracked</Badge>
+                          )}
+                          {sub.is_essential && !alreadyTracked && (
+                            <Badge variant="outline" className="text-xs">Essential</Badge>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <span className="capitalize">{sub.frequency}</span>
+                          {sub.category && (
+                            <>
+                              <span>•</span>
+                              <span>{sub.category}</span>
+                            </>
+                          )}
+                          <span>•</span>
+                          <span>{sub.transaction_count} occurrences</span>
+                          <span>•</span>
+                          <span>{Math.round(sub.confidence * 100)}% confidence</span>
+                        </div>
+                        {sub.notes && (
+                          <p className="text-xs text-muted-foreground mt-1">{sub.notes}</p>
+                        )}
+                      </div>
+                      
+                      <div className="text-right">
+                        <div className="text-lg font-semibold">
+                          {formatCurrency(sub.amount)}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          /{sub.frequency === 'yearly' ? 'yr' : sub.frequency === 'quarterly' ? 'qtr' : 'mo'}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+          
+          <DialogFooter className="border-t pt-4">
+            <Button variant="outline" onClick={() => setShowDetectDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleAddSelectedSubscriptions}
+              disabled={selectedSubscriptions.size === 0 || isDetecting}
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Add {selectedSubscriptions.size} Subscription{selectedSubscriptions.size !== 1 ? 's' : ''}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </motion.div>
   )
 }
+
+
 
 
