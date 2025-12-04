@@ -97,25 +97,15 @@ function extractTransactions(content: string): OFXTransaction[] {
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
   
-  console.log('📄 extractTransactions: content length after normalization:', normalizedContent.length)
-  
   // Find the BANKTRANLIST section first (contains all transactions)
   const tranListMatch = normalizedContent.match(/<BANKTRANLIST>([\s\S]*?)(?:<\/BANKTRANLIST>|<\/STMTRS>|$)/i)
   if (tranListMatch) {
     normalizedContent = tranListMatch[1]
-    console.log('📄 Found BANKTRANLIST section, length:', normalizedContent.length)
-  } else {
-    console.log('📄 No BANKTRANLIST section found, using full content')
   }
   
   // Split by <STMTTRN> tags to get individual transaction blocks
   // This is more reliable than regex for files with lots of whitespace
   const parts = normalizedContent.split(/<STMTTRN>/i)
-  console.log('📄 Split into', parts.length, 'parts (first part is header, rest are transactions)')
-  
-  if (parts.length > 1) {
-    console.log('📄 First transaction block (first 300 chars):', parts[1].substring(0, 300))
-  }
   
   for (let i = 1; i < parts.length; i++) { // Start at 1 to skip content before first STMTTRN
     let block = parts[i]
@@ -149,18 +139,12 @@ function extractTransactions(content: string): OFXTransaction[] {
       REFNUM: extractTagValue(block, 'REFNUM') || undefined,
     }
     
-    // Log first transaction for debugging
-    if (i === 1) {
-      console.log('📄 First parsed transaction:', transaction)
-    }
-    
     // Only add if we have meaningful data (at least a date or amount)
     if (transaction.DTPOSTED || transaction.TRNAMT || transaction.NAME) {
       transactions.push(transaction)
     }
   }
   
-  console.log('📄 Total valid transactions extracted:', transactions.length)
   return transactions
 }
 
@@ -257,9 +241,6 @@ export function parseOFX(content: string): ParseResult {
   const errors: ParseError[] = []
   const warnings: string[] = []
   
-  console.log('📄 parseOFX called, content length:', content.length)
-  console.log('📄 First 500 chars:', content.substring(0, 500))
-  
   try {
     // Detect file type from content
     let fileType: 'qbo' | 'qfx' | 'ofx' = 'ofx'
@@ -268,8 +249,6 @@ export function parseOFX(content: string): ParseResult {
     } else if (content.includes('QUICKEN')) {
       fileType = 'qfx'
     }
-    
-    console.log('📄 Detected file type:', fileType)
     
     // Extract account info
     const accountInfo = extractAccountInfo(content)
@@ -281,24 +260,14 @@ export function parseOFX(content: string): ParseResult {
     const currency = extractTagValue(content, 'CURDEF') || 'USD'
     
     // Extract all transactions
-    console.log('📄 Extracting transactions...')
     const ofxTransactions = extractTransactions(content)
-    console.log('📄 Found', ofxTransactions.length, 'transactions')
     
     if (ofxTransactions.length === 0) {
-      // Check if there's a STMTTRN tag at all
-      const hasStmttrn = content.includes('<STMTTRN>')
-      const hasBanktranlist = content.includes('<BANKTRANLIST>')
-      console.log('📄 Has STMTTRN:', hasStmttrn, 'Has BANKTRANLIST:', hasBanktranlist)
-      
       return {
         success: false,
         transactions: [],
         fileType,
-        errors: [{ 
-          message: `No transactions found in file. STMTTRN tags present: ${hasStmttrn}, BANKTRANLIST present: ${hasBanktranlist}`, 
-          severity: 'error' 
-        }],
+        errors: [{ message: 'No transactions found in file', severity: 'error' }],
         warnings,
       }
     }
