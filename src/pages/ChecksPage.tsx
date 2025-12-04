@@ -111,6 +111,18 @@ export default function ImportCenterPage() {
     description: '',
     amount: '',
   })
+  
+  // Bulk assignment states
+  const [showBulkAssign, setShowBulkAssign] = useState(false)
+  const [bulkAccountId, setBulkAccountId] = useState('')
+  const [showCreateAccount, setShowCreateAccount] = useState(false)
+  const [newAccountForm, setNewAccountForm] = useState({
+    name: '',
+    institution_name: '',
+    type: 'checking',
+    mask: '',
+    business_id: '',
+  })
 
   // Fetch pending items on mount
   useEffect(() => {
@@ -731,6 +743,93 @@ export default function ImportCenterPage() {
     }
   }
 
+  // Bulk assign account to all pending items
+  const bulkAssignAccount = async () => {
+    if (!user || !bulkAccountId || pendingItems.length === 0) return
+    
+    setIsProcessing(true)
+    setProcessingStatus('Assigning account to all items...')
+    
+    try {
+      const { error } = await supabase
+        .from('pending_import_items')
+        .update({ suggested_account_id: bulkAccountId })
+        .eq('user_id', user.id)
+        .eq('status', 'pending')
+      
+      if (error) throw error
+      
+      toast({
+        title: 'Account Assigned',
+        description: `All ${pendingItems.length} items have been assigned to the selected account.`,
+      })
+      
+      setShowBulkAssign(false)
+      setBulkAccountId('')
+      fetchPendingItems()
+    } catch (error) {
+      console.error('Error bulk assigning account:', error)
+      toast({
+        title: 'Error',
+        description: 'Failed to assign account to items.',
+        variant: 'destructive',
+      })
+    } finally {
+      setIsProcessing(false)
+      setProcessingStatus('')
+    }
+  }
+
+  // Create a new account
+  const createNewAccount = async () => {
+    if (!user || !newAccountForm.name) return
+    
+    try {
+      const { data, error } = await supabase
+        .from('accounts')
+        .insert({
+          user_id: user.id,
+          name: newAccountForm.name,
+          institution_name: newAccountForm.institution_name || null,
+          type: newAccountForm.type,
+          mask: newAccountForm.mask || null,
+          business_id: newAccountForm.business_id || null,
+          is_manual: true,
+          current_balance: 0,
+          available_balance: 0,
+          currency: 'USD',
+        })
+        .select()
+        .single()
+      
+      if (error) throw error
+      
+      toast({
+        title: 'Account Created',
+        description: `${newAccountForm.name} has been created.`,
+      })
+      
+      // Refresh accounts and select the new one
+      await fetchAccounts()
+      setBulkAccountId(data.id)
+      setShowCreateAccount(false)
+      setNewAccountForm({
+        name: '',
+        institution_name: '',
+        type: 'checking',
+        mask: '',
+        business_id: '',
+      })
+    } catch (error) {
+      console.error('Error creating account:', error)
+      toast({
+        title: 'Error',
+        description: 'Failed to create account.',
+        variant: 'destructive',
+      })
+    }
+  }
+
   const containerVariants = {
     hidden: { opacity: 0 },
     visible: { opacity: 1, transition: { staggerChildren: 0.1 } }
@@ -1066,6 +1165,10 @@ export default function ImportCenterPage() {
                         <RefreshCw className="w-4 h-4 mr-2" />
                         Refresh
                       </Button>
+                      <Button variant="outline" size="sm" onClick={() => setShowBulkAssign(true)}>
+                        <Building2 className="w-4 h-4 mr-2" />
+                        Assign Account
+                      </Button>
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -1365,6 +1468,150 @@ export default function ImportCenterPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditingItem(null)}>Cancel</Button>
             <Button onClick={saveEditItem}>Save Changes</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Assign Account Dialog */}
+      <Dialog open={showBulkAssign} onOpenChange={setShowBulkAssign}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Assign Account to All Items</DialogTitle>
+            <DialogDescription>
+              Select an account to assign to all {pendingItems.length} pending items, or create a new account.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Select Account</Label>
+              <Select value={bulkAccountId} onValueChange={setBulkAccountId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Choose an account..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {accounts.map(account => (
+                    <SelectItem key={account.id} value={account.id}>
+                      {account.name} {account.mask ? `(...${account.mask})` : ''} - {account.institution_name || 'Manual'}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            
+            <div className="text-center text-sm text-muted-foreground">or</div>
+            
+            <Button 
+              variant="outline" 
+              className="w-full" 
+              onClick={() => setShowCreateAccount(true)}
+            >
+              <Building2 className="w-4 h-4 mr-2" />
+              Create New Account
+            </Button>
+          </div>
+          
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowBulkAssign(false)}>Cancel</Button>
+            <Button onClick={bulkAssignAccount} disabled={!bulkAccountId || isProcessing}>
+              {isProcessing ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Assigning...
+                </>
+              ) : (
+                `Assign to ${pendingItems.length} Items`
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Account Dialog */}
+      <Dialog open={showCreateAccount} onOpenChange={setShowCreateAccount}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create New Account</DialogTitle>
+            <DialogDescription>
+              Create a new account for importing these transactions.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Account Name *</Label>
+              <Input
+                value={newAccountForm.name}
+                onChange={(e) => setNewAccountForm(prev => ({ ...prev, name: e.target.value }))}
+                placeholder="e.g., ShiftSpace LLC Checking"
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label>Bank/Institution Name</Label>
+              <Input
+                value={newAccountForm.institution_name}
+                onChange={(e) => setNewAccountForm(prev => ({ ...prev, institution_name: e.target.value }))}
+                placeholder="e.g., Buckholts State Bank"
+              />
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Account Type</Label>
+                <Select 
+                  value={newAccountForm.type} 
+                  onValueChange={(v) => setNewAccountForm(prev => ({ ...prev, type: v }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="checking">Checking</SelectItem>
+                    <SelectItem value="savings">Savings</SelectItem>
+                    <SelectItem value="credit">Credit Card</SelectItem>
+                    <SelectItem value="loan">Loan</SelectItem>
+                    <SelectItem value="investment">Investment</SelectItem>
+                    <SelectItem value="other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div className="space-y-2">
+                <Label>Last 4 Digits</Label>
+                <Input
+                  value={newAccountForm.mask}
+                  onChange={(e) => setNewAccountForm(prev => ({ ...prev, mask: e.target.value.slice(0, 4) }))}
+                  placeholder="e.g., 2940"
+                  maxLength={4}
+                />
+              </div>
+            </div>
+            
+            <div className="space-y-2">
+              <Label>Business/Entity (Optional)</Label>
+              <Select 
+                value={newAccountForm.business_id} 
+                onValueChange={(v) => setNewAccountForm(prev => ({ ...prev, business_id: v }))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a business..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">None (Personal)</SelectItem>
+                  {businesses.map(biz => (
+                    <SelectItem key={biz.id} value={biz.id}>{biz.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCreateAccount(false)}>Cancel</Button>
+            <Button onClick={createNewAccount} disabled={!newAccountForm.name}>
+              Create Account
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
