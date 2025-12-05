@@ -780,6 +780,146 @@ export default function ImportCenterPage() {
     }
   }
 
+  // Bulk assign account AND submit all items in one action
+  const bulkAssignAndSubmitAll = async () => {
+    if (!user || !bulkAccountId || pendingItems.length === 0) return
+    
+    setIsProcessing(true)
+    setShowBulkAssign(false)
+    setProcessingStatus('Assigning account and importing all items...')
+    
+    try {
+      // First, assign the account to all pending items
+      const { error: assignError } = await supabase
+        .from('pending_import_items')
+        .update({ suggested_account_id: bulkAccountId })
+        .eq('user_id', user.id)
+        .eq('status', 'pending')
+      
+      if (assignError) throw assignError
+      
+      // Refresh pending items to get the updated account assignments
+      await fetchPendingItems()
+      
+      // Now get the updated items and separate into transactions and checks
+      const { data: updatedItems, error: fetchError } = await supabase
+        .from('pending_import_items')
+        .select('*')
+        .eq('user_id', user.id)
+        .in('status', ['pending', 'modified'])
+        .order('date', { ascending: false })
+      
+      if (fetchError) throw fetchError
+      
+      const itemsToProcess = updatedItems || []
+      const transactions = itemsToProcess.filter(item => !(item.item_type === 'check' && item.check_number))
+      const checks = itemsToProcess.filter(item => item.item_type === 'check' && item.check_number)
+      
+      let approvedCount = 0
+      const BATCH_SIZE = 50
+      
+      // Batch insert transactions
+      if (transactions.length > 0) {
+        for (let i = 0; i < transactions.length; i += BATCH_SIZE) {
+          const batch = transactions.slice(i, i + BATCH_SIZE)
+          setProcessingStatus(`Importing transactions ${i + 1}-${Math.min(i + BATCH_SIZE, transactions.length)} of ${transactions.length}...`)
+          
+          const transactionsToInsert = batch.map(item => ({
+            user_id: user.id,
+            account_id: bulkAccountId, // Use the selected account
+            amount: item.amount,
+            date: item.date,
+            name: item.description,
+            merchant_name: item.merchant_name || null,
+            category_id: item.suggested_category_id || null,
+            business_id: item.suggested_business_id || null,
+            is_business_expense: item.is_business_expense,
+            is_manual: true,
+            notes: item.memo || null,
+            check_number: item.check_number || null,
+          }))
+          
+          const { data: insertedTxns, error: insertError } = await supabase
+            .from('transactions')
+            .insert(transactionsToInsert)
+            .select('id')
+          
+          if (!insertError && insertedTxns) {
+            // Mark pending items as approved
+            const itemIds = batch.map(item => item.id)
+            await supabase
+              .from('pending_import_items')
+              .update({ 
+                status: 'approved',
+                reviewed_at: new Date().toISOString(),
+              })
+              .in('id', itemIds)
+            
+            approvedCount += batch.length
+          }
+        }
+      }
+      
+      // For checks, still do them one at a time since addCheck has special logic
+      for (const item of checks) {
+        setProcessingStatus(`Importing check ${approvedCount + 1} of ${itemsToProcess.length}...`)
+        try {
+          const check = await addCheck({
+            user_id: user.id,
+            account_id: bulkAccountId, // Use the selected account
+            check_number: item.check_number!,
+            payee: item.payee || item.description,
+            amount: Math.abs(item.amount),
+            date_written: item.date,
+            memo: item.memo || null,
+            category_id: item.suggested_category_id || null,
+            business_id: item.suggested_business_id || null,
+            status: 'pending',
+          })
+          
+          if (check) {
+            await supabase
+              .from('pending_import_items')
+              .update({ 
+                status: 'approved',
+                imported_check_id: check.id,
+                reviewed_at: new Date().toISOString(),
+              })
+              .eq('id', item.id)
+            approvedCount++
+          }
+        } catch (err) {
+          console.error('Error approving check:', err)
+        }
+      }
+      
+      toast({
+        title: 'Import Complete!',
+        description: `Successfully imported ${approvedCount} of ${itemsToProcess.length} items to the selected account.`,
+      })
+      
+      setBulkAccountId('')
+      
+      // Refresh data
+      fetchPendingItems()
+      if (user) {
+        fetchAccounts(user.id)
+        fetchTransactions(user.id)
+      }
+      
+    } catch (error: any) {
+      console.error('Error in bulk assign and submit:', error)
+      toast({
+        title: 'Import Error',
+        description: error.message,
+        variant: 'destructive',
+      })
+    } finally {
+      setIsProcessing(false)
+      setProcessingStatus('')
+    }
+  }
+
   // Create a new account
   const createNewAccount = async () => {
     if (!user || !newAccountForm.name) return
@@ -1516,16 +1656,22 @@ export default function ImportCenterPage() {
             </Button>
           </div>
           
-          <DialogFooter>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
             <Button variant="outline" onClick={() => setShowBulkAssign(false)}>Cancel</Button>
-            <Button onClick={bulkAssignAccount} disabled={!bulkAccountId || isProcessing}>
+            <Button variant="outline" onClick={bulkAssignAccount} disabled={!bulkAccountId || isProcessing}>
+              Assign Only
+            </Button>
+            <Button onClick={bulkAssignAndSubmitAll} disabled={!bulkAccountId || isProcessing}>
               {isProcessing ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Assigning...
+                  Importing...
                 </>
               ) : (
-                `Assign to ${pendingItems.length} Items`
+                <>
+                  <CheckCheck className="w-4 h-4 mr-2" />
+                  Submit All ({pendingItems.length})
+                </>
               )}
             </Button>
           </DialogFooter>

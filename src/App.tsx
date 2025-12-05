@@ -8,6 +8,7 @@ import DashboardPage from '@/pages/DashboardPage'
 import AccountsPage from '@/pages/AccountsPage'
 import TransactionsPage from '@/pages/TransactionsPage'
 import TransactionDetailPage from '@/pages/TransactionDetailPage'
+import CheckDetailPage from '@/pages/CheckDetailPage'
 import ImportPage from '@/pages/ImportPage'
 import ImportCenterPage from '@/pages/ChecksPage' // AI Import Center (formerly ChecksPage)
 import PaymentsPage from '@/pages/PaymentsPage' // Unified Bills/Checks/Subscriptions
@@ -56,6 +57,7 @@ export default function App() {
                   <Route path="/accounts" element={<AccountsPage />} />
                   <Route path="/transactions" element={<TransactionsPage />} />
                   <Route path="/transactions/:id" element={<TransactionDetailPage />} />
+                  <Route path="/checks/:id" element={<CheckDetailPage />} />
                   <Route path="/import" element={<ImportCenterPage />} />
                   <Route path="/projects" element={<ProjectsPage />} />
                   <Route path="/payments" element={<PaymentsPage />} />

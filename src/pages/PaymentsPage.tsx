@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
   Plus, 
@@ -19,6 +20,8 @@ import {
   FileCheck,
   Link2,
   Search,
+  Tag,
+  FileText,
 } from 'lucide-react'
 import { useFinancialStore } from '@/stores/financialStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -28,6 +31,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import {
   Dialog,
@@ -56,6 +60,7 @@ import { useToast } from '@/components/ui/use-toast'
 import type { Bill, Check as CheckType, RecurringTransaction } from '@/types/database'
 
 export default function PaymentsPage() {
+  const navigate = useNavigate()
   const { user } = useAuthStore()
   const { 
     bills, 
@@ -67,6 +72,7 @@ export default function PaymentsPage() {
     businesses,
     addBill,
     updateBill,
+    updateCheck,
     addRecurringTransaction,
     matchCheckToTransaction,
     getUnmatchedChecks,
@@ -91,6 +97,14 @@ export default function PaymentsPage() {
   // Check filter state
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'cleared' | 'void'>('all')
+  
+  // Quick label dialog state
+  const [showQuickLabelDialog, setShowQuickLabelDialog] = useState(false)
+  const [quickLabelCheck, setQuickLabelCheck] = useState<CheckType | null>(null)
+  const [quickLabelForm, setQuickLabelForm] = useState({
+    memo: '',
+    category_id: '',
+  })
   
   // Bill form state
   const [billForm, setBillForm] = useState({
@@ -203,6 +217,39 @@ export default function PaymentsPage() {
     })
     setShowMatchDialog(false)
     setSelectedCheck(null)
+  }
+
+  const openQuickLabel = (check: CheckType) => {
+    setQuickLabelCheck(check)
+    setQuickLabelForm({
+      memo: check.memo || '',
+      category_id: check.category_id || '',
+    })
+    setShowQuickLabelDialog(true)
+  }
+
+  const handleQuickLabelSave = async () => {
+    if (!quickLabelCheck) return
+    
+    try {
+      await updateCheck(quickLabelCheck.id, {
+        memo: quickLabelForm.memo || null,
+        category_id: quickLabelForm.category_id || null,
+      })
+      toast({
+        title: 'Check labeled',
+        description: 'The expense label has been saved.',
+        variant: 'success',
+      })
+      setShowQuickLabelDialog(false)
+      setQuickLabelCheck(null)
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to save label.',
+        variant: 'destructive',
+      })
+    }
   }
 
   const handleDetectSubscriptions = async () => {
@@ -786,7 +833,8 @@ export default function PaymentsPage() {
                       return (
                         <div 
                           key={check.id}
-                          className="flex items-center justify-between p-4 rounded-lg hover:bg-accent/50 transition-colors"
+                          className="flex items-center justify-between p-4 rounded-lg hover:bg-accent/50 transition-colors cursor-pointer group"
+                          onClick={() => navigate(`/checks/${check.id}`)}
                         >
                           <div className="flex items-center gap-4">
                             <div className="w-12 h-12 rounded-xl bg-secondary flex items-center justify-center">
@@ -822,29 +870,51 @@ export default function PaymentsPage() {
                               </div>
                               {check.memo && (
                                 <div className="text-sm text-muted-foreground mt-1">
-                                  Memo: {check.memo}
+                                  <FileText className="w-3 h-3 inline mr-1" />
+                                  {check.memo}
                                 </div>
                               )}
                             </div>
                           </div>
                           
-                          <div className="flex items-center gap-4">
+                          <div className="flex items-center gap-3">
                             <div className="text-lg font-semibold">
                               {formatCurrency(check.amount)}
                             </div>
-                            {check.status === 'pending' && !check.matched_transaction_id && (
-                              <Button 
-                                variant="outline" 
-                                size="sm"
-                                onClick={() => {
-                                  setSelectedCheck(check)
-                                  setShowMatchDialog(true)
-                                }}
-                              >
-                                <Link2 className="w-4 h-4 mr-2" />
-                                Match
-                              </Button>
-                            )}
+                            
+                            {/* Three-dot menu */}
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon"
+                                  className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <MoreVertical className="w-4 h-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                                <DropdownMenuItem onClick={() => openQuickLabel(check)}>
+                                  <Tag className="w-4 h-4 mr-2" />
+                                  Quick Label
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => navigate(`/checks/${check.id}`)}>
+                                  <Pencil className="w-4 h-4 mr-2" />
+                                  Edit Details
+                                </DropdownMenuItem>
+                                {check.status === 'pending' && !check.matched_transaction_id && (
+                                  <DropdownMenuItem onClick={() => {
+                                    setSelectedCheck(check)
+                                    setShowMatchDialog(true)
+                                  }}>
+                                    <Link2 className="w-4 h-4 mr-2" />
+                                    Match to Transaction
+                                  </DropdownMenuItem>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                            
                             <Badge variant={
                               check.status === 'cleared' ? 'success' :
                               check.status === 'pending' ? 'warning' : 'destructive'
@@ -1194,6 +1264,75 @@ export default function PaymentsPage() {
           
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowMatchDialog(false)}>Cancel</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Quick Label Dialog */}
+      <Dialog open={showQuickLabelDialog} onOpenChange={setShowQuickLabelDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Tag className="w-5 h-5 text-primary" />
+              Quick Label Check
+            </DialogTitle>
+            <DialogDescription>
+              Add a quick label to describe what this expense was for.
+            </DialogDescription>
+          </DialogHeader>
+          
+          {quickLabelCheck && (
+            <div className="space-y-4 py-4">
+              {/* Check Summary */}
+              <div className="bg-accent/50 p-4 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-semibold">Check #{quickLabelCheck.check_number}</div>
+                    <div className="text-sm text-muted-foreground">To: {quickLabelCheck.payee}</div>
+                  </div>
+                  <div className="text-lg font-bold">{formatCurrency(quickLabelCheck.amount)}</div>
+                </div>
+              </div>
+              
+              {/* Memo / Purpose */}
+              <div className="space-y-2">
+                <Label htmlFor="quick-memo">What was this for?</Label>
+                <Textarea
+                  id="quick-memo"
+                  placeholder="e.g., Office supplies, Contractor payment, Equipment purchase..."
+                  value={quickLabelForm.memo}
+                  onChange={(e) => setQuickLabelForm(prev => ({ ...prev, memo: e.target.value }))}
+                  className="min-h-[100px]"
+                />
+              </div>
+              
+              {/* Category */}
+              <div className="space-y-2">
+                <Label>Category (Optional)</Label>
+                <Select 
+                  value={quickLabelForm.category_id || '_none'} 
+                  onValueChange={(v) => setQuickLabelForm(prev => ({ ...prev, category_id: v === '_none' ? '' : v }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_none">No Category</SelectItem>
+                    {categories.map(cat => (
+                      <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
+          
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowQuickLabelDialog(false)}>Cancel</Button>
+            <Button onClick={handleQuickLabelSave}>
+              <Check className="w-4 h-4 mr-2" />
+              Save Label
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
