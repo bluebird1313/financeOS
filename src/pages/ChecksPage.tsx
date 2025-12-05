@@ -140,10 +140,11 @@ export default function ImportCenterPage() {
         .from('pending_import_items')
         .select('*')
         .eq('user_id', user.id)
-        .eq('status', 'pending')
+        .in('status', ['pending', 'modified'])
         .order('date', { ascending: false })
       
       if (error) throw error
+      console.log('Fetched pending items:', data?.length || 0)
       setPendingItems(data || [])
     } catch (error) {
       console.error('Error fetching pending items:', error)
@@ -206,6 +207,7 @@ export default function ImportCenterPage() {
         setProcessingProgress((i / uploadedFiles.length) * 100)
 
         // Create document import record
+        console.log('Creating document import for:', file.name)
         const docResult = await (supabase as any)
           .from('document_imports')
           .insert({
@@ -220,8 +222,14 @@ export default function ImportCenterPage() {
 
         if (docResult.error || !docResult.data) {
           console.error('Error creating document import:', docResult.error)
+          toast({
+            title: `Failed to start import for ${file.name}`,
+            description: docResult.error?.message || 'Could not create import record',
+            variant: 'destructive',
+          })
           continue
         }
+        console.log('Document import created:', docResult.data.id)
         
         const docImport = docResult.data as DocumentImport
 
@@ -354,9 +362,13 @@ export default function ImportCenterPage() {
           }
           // For QBO/OFX/QFX files, use local parser with batch insert
           else if (fileExt === 'qbo' || fileExt === 'ofx' || fileExt === 'qfx') {
+            console.log(`Processing ${fileExt.toUpperCase()} file:`, file.name)
             setProcessingStatus(`Parsing ${fileExt.toUpperCase()} file ${file.name}...`)
             const content = await file.text()
+            console.log('File content length:', content.length)
+            
             const parseResult = parseOFX(content)
+            console.log('Parse result:', { success: parseResult.success, transactionCount: parseResult.transactions.length, errors: parseResult.errors })
             
             if (!parseResult.success || parseResult.transactions.length === 0) {
               throw new Error(parseResult.errors?.[0]?.message || 'No transactions found in file')
@@ -381,20 +393,26 @@ export default function ImportCenterPage() {
               }
             })
             
+            console.log(`Inserting ${pendingItems.length} pending items...`)
+            
             // Batch insert (100 at a time for optimal performance)
             const BATCH_SIZE = 100
             let itemsCreated = 0
-            for (let i = 0; i < pendingItems.length; i += BATCH_SIZE) {
-              const batch = pendingItems.slice(i, i + BATCH_SIZE)
-              setProcessingStatus(`Importing ${Math.min(i + BATCH_SIZE, pendingItems.length)} of ${pendingItems.length} transactions...`)
-              const { error } = await supabase
+            for (let j = 0; j < pendingItems.length; j += BATCH_SIZE) {
+              const batch = pendingItems.slice(j, j + BATCH_SIZE)
+              setProcessingStatus(`Importing ${Math.min(j + BATCH_SIZE, pendingItems.length)} of ${pendingItems.length} transactions...`)
+              const { error: insertError } = await supabase
                 .from('pending_import_items')
                 .insert(batch)
               
-              if (!error) {
+              if (insertError) {
+                console.error('Error inserting batch:', insertError)
+              } else {
                 itemsCreated += batch.length
               }
             }
+            
+            console.log(`Created ${itemsCreated} items, updating document import status...`)
             
             // Update document import status
             await supabase
@@ -408,6 +426,7 @@ export default function ImportCenterPage() {
             totalItems += itemsCreated
             totalProcessed++
             
+            console.log('QBO processing complete!')
             toast({
               title: `Processed ${file.name}`,
               description: `Found ${itemsCreated} transactions from ${parseResult.detectedAccount?.mask ? `account ...${parseResult.detectedAccount.mask}` : 'bank export'}`,
@@ -820,6 +839,7 @@ export default function ImportCenterPage() {
       
       // Batch insert transactions
       if (transactions.length > 0) {
+        console.log(`Processing ${transactions.length} transactions...`)
         for (let i = 0; i < transactions.length; i += BATCH_SIZE) {
           const batch = transactions.slice(i, i + BATCH_SIZE)
           setProcessingStatus(`Importing transactions ${i + 1}-${Math.min(i + BATCH_SIZE, transactions.length)} of ${transactions.length}...`)
@@ -833,21 +853,30 @@ export default function ImportCenterPage() {
             merchant_name: item.merchant_name || null,
             category_id: item.suggested_category_id || null,
             business_id: item.suggested_business_id || null,
-            is_business_expense: item.is_business_expense,
+            is_business_expense: item.is_business_expense || false,
             is_manual: true,
             notes: item.memo || null,
             check_number: item.check_number || null,
           }))
           
+          console.log('Inserting batch of transactions:', transactionsToInsert.length)
           const { data: insertedTxns, error: insertError } = await supabase
             .from('transactions')
             .insert(transactionsToInsert)
             .select('id')
           
-          if (!insertError && insertedTxns) {
+          if (insertError) {
+            console.error('Error inserting transactions:', insertError)
+            toast({
+              title: 'Error importing transactions',
+              description: insertError.message,
+              variant: 'destructive',
+            })
+          } else if (insertedTxns) {
+            console.log('Inserted transactions:', insertedTxns.length)
             // Mark pending items as approved
             const itemIds = batch.map(item => item.id)
-            await supabase
+            const { error: updateError } = await supabase
               .from('pending_import_items')
               .update({ 
                 status: 'approved',
@@ -855,15 +884,22 @@ export default function ImportCenterPage() {
               })
               .in('id', itemIds)
             
-            approvedCount += batch.length
+            if (updateError) {
+              console.error('Error updating pending items status:', updateError)
+            } else {
+              console.log('Marked items as approved:', itemIds.length)
+              approvedCount += batch.length
+            }
           }
         }
       }
       
       // For checks, still do them one at a time since addCheck has special logic
+      console.log(`Processing ${checks.length} checks...`)
       for (const item of checks) {
         setProcessingStatus(`Importing check ${approvedCount + 1} of ${itemsToProcess.length}...`)
         try {
+          console.log('Adding check:', item.check_number, item.payee || item.description)
           const check = await addCheck({
             user_id: user.id,
             account_id: bulkAccountId, // Use the selected account
@@ -878,7 +914,8 @@ export default function ImportCenterPage() {
           })
           
           if (check) {
-            await supabase
+            console.log('Check created:', check.id)
+            const { error: updateError } = await supabase
               .from('pending_import_items')
               .update({ 
                 status: 'approved',
@@ -886,26 +923,39 @@ export default function ImportCenterPage() {
                 reviewed_at: new Date().toISOString(),
               })
               .eq('id', item.id)
-            approvedCount++
+            
+            if (updateError) {
+              console.error('Error updating check status:', updateError)
+            } else {
+              approvedCount++
+            }
+          } else {
+            console.error('Check was not created for item:', item.id)
           }
         } catch (err) {
           console.error('Error approving check:', err)
         }
       }
       
+      console.log(`Import complete! Approved ${approvedCount} of ${itemsToProcess.length} items`)
+      
       toast({
         title: 'Import Complete!',
         description: `Successfully imported ${approvedCount} of ${itemsToProcess.length} items to the selected account.`,
+        variant: 'success',
       })
       
       setBulkAccountId('')
       
-      // Refresh data
-      fetchPendingItems()
+      // Refresh data - await these to ensure they complete
+      console.log('Refreshing pending items...')
+      await fetchPendingItems()
       if (user) {
-        fetchAccounts(user.id)
-        fetchTransactions(user.id)
+        console.log('Refreshing accounts and transactions...')
+        await fetchAccounts(user.id)
+        await fetchTransactions(user.id)
       }
+      console.log('All data refreshed')
       
     } catch (error: any) {
       console.error('Error in bulk assign and submit:', error)

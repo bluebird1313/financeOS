@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/authStore'
 import MainLayout from '@/components/layout/MainLayout'
 import AuthPage from '@/pages/AuthPage'
 import DashboardPage from '@/pages/DashboardPage'
+import FinancialOverviewPage from '@/pages/FinancialOverviewPage'
 import AccountsPage from '@/pages/AccountsPage'
 import TransactionsPage from '@/pages/TransactionsPage'
 import TransactionDetailPage from '@/pages/TransactionDetailPage'
@@ -54,6 +55,7 @@ export default function App() {
               <MainLayout>
                 <Routes>
                   <Route path="/" element={<DashboardPage />} />
+                  <Route path="/overview" element={<FinancialOverviewPage />} />
                   <Route path="/accounts" element={<AccountsPage />} />
                   <Route path="/transactions" element={<TransactionsPage />} />
                   <Route path="/transactions/:id" element={<TransactionDetailPage />} />

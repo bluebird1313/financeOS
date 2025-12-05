@@ -1,6 +1,7 @@
 import { NavLink, useLocation } from 'react-router-dom'
 import { 
-  LayoutDashboard, 
+  LayoutDashboard,
+  PieChart,
   Wallet, 
   ArrowLeftRight, 
   Upload,
@@ -18,6 +19,7 @@ import { Badge } from '@/components/ui/badge'
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
+  { name: 'Overview', href: '/overview', icon: PieChart },
   { name: 'Accounts', href: '/accounts', icon: Wallet },
   { name: 'Transactions', href: '/transactions', icon: ArrowLeftRight },
   { name: 'Import', href: '/import', icon: Upload },

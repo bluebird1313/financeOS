@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { 
   TrendingUp, 
@@ -17,6 +18,14 @@ import { Progress } from '@/components/ui/progress'
 import { formatCurrency, formatDate, formatRelativeDate } from '@/lib/utils'
 import { useNavigate } from 'react-router-dom'
 import AlertsWidget from '@/components/AlertsWidget'
+import EntitySummaryWidget from '@/components/EntitySummaryWidget'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   AreaChart,
   Area,
@@ -27,48 +36,86 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 
-// Mock data for the chart - in production this would come from actual data
-const cashFlowData = [
-  { date: 'Mon', income: 2400, expenses: 1800 },
-  { date: 'Tue', income: 1398, expenses: 2100 },
-  { date: 'Wed', income: 4800, expenses: 1200 },
-  { date: 'Thu', income: 3908, expenses: 2780 },
-  { date: 'Fri', income: 4800, expenses: 1890 },
-  { date: 'Sat', income: 3800, expenses: 2390 },
-  { date: 'Sun', income: 4300, expenses: 1490 },
-]
-
 export default function DashboardPage() {
   const navigate = useNavigate()
   const { 
     accounts, 
     transactions,
+    businesses,
     getNetWorth, 
     getRecentTransactions, 
     getUnmatchedChecks,
     getUpcomingBills,
   } = useFinancialStore()
+  
+  const [entityFilter, setEntityFilter] = useState<string>('all')
 
-  const netWorth = getNetWorth()
-  const recentTransactions = getRecentTransactions(5)
   const unmatchedChecks = getUnmatchedChecks()
   const upcomingBills = getUpcomingBills()
+  
+  // Filter accounts and transactions based on entity filter
+  const filteredAccounts = useMemo(() => {
+    if (entityFilter === 'all') return accounts
+    if (entityFilter === 'personal') return accounts.filter(a => !a.business_id)
+    return accounts.filter(a => a.business_id === entityFilter)
+  }, [accounts, entityFilter])
+
+  const filteredTransactions = useMemo(() => {
+    if (entityFilter === 'all') return transactions
+    if (entityFilter === 'personal') return transactions.filter(t => !t.business_id)
+    return transactions.filter(t => t.business_id === entityFilter)
+  }, [transactions, entityFilter])
+
+  // Calculate net worth for filtered accounts
+  const netWorth = useMemo(() => {
+    return filteredAccounts.reduce((total, account) => {
+      if (account.type === 'credit' || account.type === 'loan') {
+        return total - account.current_balance
+      }
+      return total + account.current_balance
+    }, 0)
+  }, [filteredAccounts])
+
+  const recentTransactions = useMemo(() => {
+    return filteredTransactions.slice(0, 5)
+  }, [filteredTransactions])
   
   // Calculate monthly cash flow
   const now = new Date()
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
-  const monthlyTransactions = transactions.filter(t => new Date(t.date) >= startOfMonth)
+  const monthlyTransactions = filteredTransactions.filter(t => new Date(t.date) >= startOfMonth)
   const monthlyIncome = monthlyTransactions.filter(t => t.amount > 0).reduce((sum, t) => sum + t.amount, 0)
   const monthlyExpenses = monthlyTransactions.filter(t => t.amount < 0).reduce((sum, t) => sum + Math.abs(t.amount), 0)
   const monthlySavings = monthlyIncome - monthlyExpenses
 
-  const totalAssets = accounts
+  const totalAssets = filteredAccounts
     .filter(a => a.type !== 'credit' && a.type !== 'loan')
     .reduce((sum, a) => sum + a.current_balance, 0)
 
-  const totalLiabilities = accounts
+  const totalLiabilities = filteredAccounts
     .filter(a => a.type === 'credit' || a.type === 'loan')
     .reduce((sum, a) => sum + a.current_balance, 0)
+
+  // Generate real cash flow data from transactions (last 14 days)
+  const cashFlowData = useMemo(() => {
+    const days = 14
+    const data: { date: string; income: number; expenses: number; label: string }[] = []
+    
+    for (let i = days - 1; i >= 0; i--) {
+      const date = new Date()
+      date.setDate(date.getDate() - i)
+      const dateStr = date.toISOString().split('T')[0]
+      const dayLabel = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+      
+      const dayTransactions = filteredTransactions.filter(t => t.date.startsWith(dateStr))
+      const income = dayTransactions.filter(t => t.amount > 0).reduce((sum, t) => sum + t.amount, 0)
+      const expenses = dayTransactions.filter(t => t.amount < 0).reduce((sum, t) => sum + Math.abs(t.amount), 0)
+      
+      data.push({ date: dateStr, income, expenses, label: dayLabel })
+    }
+    
+    return data
+  }, [filteredTransactions])
 
   const containerVariants = {
     hidden: { opacity: 0 },
@@ -94,12 +141,35 @@ export default function DashboardPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="font-display text-3xl font-bold">Dashboard</h1>
-          <p className="text-muted-foreground">Your financial overview at a glance</p>
+          <p className="text-muted-foreground">
+            {entityFilter === 'all' 
+              ? 'Your complete financial overview' 
+              : entityFilter === 'personal'
+                ? 'Personal finances only'
+                : `${businesses.find(b => b.id === entityFilter)?.name || 'Business'} finances`
+            }
+          </p>
         </div>
-        <Button onClick={() => navigate('/accounts')}>
-          <Wallet className="w-4 h-4 mr-2" />
-          Add Account
-        </Button>
+        <div className="flex items-center gap-3">
+          {businesses.length > 0 && (
+            <Select value={entityFilter} onValueChange={setEntityFilter}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="All Finances" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Finances</SelectItem>
+                <SelectItem value="personal">Personal Only</SelectItem>
+                {businesses.map(b => (
+                  <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <Button onClick={() => navigate('/accounts')}>
+            <Wallet className="w-4 h-4 mr-2" />
+            Add Account
+          </Button>
+        </div>
       </div>
 
       {/* Stats Cards */}
@@ -135,7 +205,7 @@ export default function DashboardPage() {
             <CardContent>
               <div className="text-2xl font-bold">{formatCurrency(totalAssets)}</div>
               <div className="flex items-center gap-1 mt-1 text-sm text-muted-foreground">
-                <span>{accounts.filter(a => a.type !== 'credit' && a.type !== 'loan').length} accounts</span>
+                <span>{filteredAccounts.filter(a => a.type !== 'credit' && a.type !== 'loan').length} accounts</span>
               </div>
             </CardContent>
           </Card>
@@ -154,7 +224,7 @@ export default function DashboardPage() {
                 {formatCurrency(totalLiabilities)}
               </div>
               <div className="flex items-center gap-1 mt-1 text-sm text-muted-foreground">
-                <span>{accounts.filter(a => a.type === 'credit' || a.type === 'loan').length} accounts</span>
+                <span>{filteredAccounts.filter(a => a.type === 'credit' || a.type === 'loan').length} accounts</span>
               </div>
             </CardContent>
           </Card>
@@ -187,7 +257,7 @@ export default function DashboardPage() {
           <Card>
             <CardHeader>
               <CardTitle>Cash Flow</CardTitle>
-              <CardDescription>Income vs Expenses over the past week</CardDescription>
+              <CardDescription>Income vs Expenses over the past 14 days</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="h-[300px]">
@@ -205,14 +275,18 @@ export default function DashboardPage() {
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
                     <XAxis 
-                      dataKey="date" 
+                      dataKey="label" 
                       stroke="#71717a"
-                      fontSize={12}
+                      fontSize={11}
+                      interval={1}
+                      angle={-45}
+                      textAnchor="end"
+                      height={60}
                     />
                     <YAxis 
                       stroke="#71717a"
                       fontSize={12}
-                      tickFormatter={(value) => `$${value / 1000}k`}
+                      tickFormatter={(value) => value >= 1000 ? `$${(value / 1000).toFixed(1)}k` : `$${value}`}
                     />
                     <Tooltip 
                       contentStyle={{
@@ -221,6 +295,7 @@ export default function DashboardPage() {
                         borderRadius: '8px',
                       }}
                       formatter={(value: number) => formatCurrency(value)}
+                      labelFormatter={(label) => label}
                     />
                     <Area
                       type="monotone"
@@ -316,6 +391,15 @@ export default function DashboardPage() {
         </motion.div>
       </div>
 
+      {/* Entity Summary - Personal vs Business Breakdown */}
+      <motion.div variants={itemVariants}>
+        <EntitySummaryWidget 
+          accounts={accounts}
+          businesses={businesses}
+          transactions={transactions}
+        />
+      </motion.div>
+
       {/* Recent Transactions */}
       <motion.div variants={itemVariants}>
         <Card>
@@ -389,17 +473,19 @@ export default function DashboardPage() {
             <CardDescription>Balance distribution across your accounts</CardDescription>
           </CardHeader>
           <CardContent>
-            {accounts.length === 0 ? (
+            {filteredAccounts.length === 0 ? (
               <div className="text-center py-8">
-                <p className="text-muted-foreground mb-4">No accounts connected</p>
+                <p className="text-muted-foreground mb-4">
+                  {entityFilter === 'all' ? 'No accounts connected' : 'No accounts in this entity'}
+                </p>
                 <Button onClick={() => navigate('/accounts')}>
                   <Wallet className="w-4 h-4 mr-2" />
-                  Connect Your First Account
+                  {entityFilter === 'all' ? 'Connect Your First Account' : 'View All Accounts'}
                 </Button>
               </div>
             ) : (
               <div className="space-y-4">
-                {accounts.slice(0, 5).map((account) => {
+                {filteredAccounts.slice(0, 5).map((account) => {
                   const percentage = totalAssets > 0 
                     ? (Math.abs(account.current_balance) / (totalAssets + totalLiabilities)) * 100
                     : 0
@@ -425,13 +511,13 @@ export default function DashboardPage() {
                     </div>
                   )
                 })}
-                {accounts.length > 5 && (
+                {filteredAccounts.length > 5 && (
                   <Button 
                     variant="ghost" 
                     className="w-full" 
                     onClick={() => navigate('/accounts')}
                   >
-                    View all {accounts.length} accounts
+                    View all {filteredAccounts.length} accounts
                   </Button>
                 )}
               </div>
